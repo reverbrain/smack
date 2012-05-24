@@ -20,17 +20,6 @@ mmap::~mmap()
 		munmap(data_, mapped_size);
 }
 
-bsa_t mmap::data(size_t offset, size_t sz)
-{
-	boost::mutex::scoped_lock guard(lock);
-
-	check_and_remap(offset + sz);
-
-	bsa_t a(new char[sz]);
-	memcpy(a.get(), data_ + offset, sz);
-	return a;
-}
-
 void mmap::do_mmap()
 {
 	mapped_size = size();

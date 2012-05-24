@@ -102,8 +102,6 @@ class logger {
 			logger::instance()->do_log((mask), ##msg); \
 	} while (0)
 
-typedef boost::shared_array<char> bsa_t;
-
 class file {
 	public:
 		file(const std::string &path);
@@ -113,8 +111,6 @@ class file {
 
 		void write(const char *data, size_t offset, size_t size);
 		void read(char *data, size_t offset, size_t size);
-
-		bsa_t data(size_t offset, size_t size);
 
 		size_t size() const;
 
@@ -133,8 +129,6 @@ class mmap : public file {
 		mmap(int fd);
 
 		virtual ~mmap();
-
-		bsa_t data(size_t offset, size_t size);
 
 	protected:
 		char *data_;
@@ -270,11 +264,6 @@ class mmap_index : public mmap {
 
 
 typedef unsigned int (* bloom_hash_t)(const char *data, int size);
-
-struct bloom_filter {
-	int			size;
-	char			data[];
-} __attribute__ ((packed));
 
 class bloom {
 	public:

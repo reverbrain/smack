@@ -85,6 +85,8 @@ struct zlib_decompress {
 	}
 };
 
+typedef boost::shared_array<char> bsa_t;
+
 struct zlib {
 	std::vector<char> filter_out(std::vector<char> &data) {
 		std::vector<char> vec;

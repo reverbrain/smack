@@ -122,16 +122,3 @@ int file::get() const
 {
 	return fd;
 }
-
-bsa_t file::data(size_t offset, size_t size)
-{
-	if (offset + size > size_) {
-		std::ostringstream str;
-		str << "could not read file beyond its total-size: " << size_ << ", req-offset: " << offset << ", req-size: " << size;
-		throw std::runtime_error(str.str());
-	}
-
-	bsa_t a(new char[size]);
-	read(a.get(), offset, size);
-	return a;
-}
