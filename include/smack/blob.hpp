@@ -1,11 +1,17 @@
 #ifndef __SMACK_BLOB_HPP
 #define __SMACK_BLOB_HPP
 
+#include <boost/iostreams/device/file_descriptor.hpp>
+#include <boost/iostreams/filtering_streambuf.hpp>
+#include <boost/iostreams/filter/zlib.hpp>
+
 #include <smack/base.hpp>
 
 namespace ioremap { namespace smack {
 
 typedef std::map<key, std::string, keycomp> cache_t;
+
+namespace bio = boost::iostreams;
 
 struct chunk_ctl {
 	struct index		start, end;
@@ -18,25 +24,31 @@ struct chunk_ctl {
 template <class filter_t>
 class chunk {
 	public:
-		chunk(int bloom_size, cache_t &cache) {
+		chunk(int bloom_size, cache_t &cache, size_t num) {
 			bloom b(bloom_size);
 
 			m_idx.reserve(cache.size());
 			m_data.reserve(cache.size() * 100);
 
-			for (cache_t::iterator it = cache.begin(); it != cache.end(); ++it) {
+			size_t count = 0;
+			cache_t::iterator it;
+			for (it = cache.begin(); it != cache.end(); ++it) {
 				b.add(it->second.data(), it->second.size());
 
 				m_idx.push_back(*(it->first.idx()));
 				m_data.insert(m_data.end(), it->second.data(), it->second.data() + it->second.size());
+				if (++count == num)
+					break;
 			}
 
 			m_data = m_filter.filter_out(m_data);
 
-			m_ctl.start = *cache.begin()->first.idx();
-			m_ctl.end = *cache.rbegin()->first.idx();
+			m_ctl.start = *(cache.begin()->first.idx());
+			m_ctl.end = *(cache.rbegin()->first.idx());
 			m_ctl.size = m_data.size();
-			m_ctl.num = cache.size();
+			m_ctl.num = count;
+
+			cache.erase(cache.begin(), it);
 		}
 
 		std::vector<struct index> &index() {
@@ -74,6 +86,35 @@ class blob_store {
 			m_index.write((char *)c.index().data(), m_index.size(), c.index().size() * sizeof(struct index));
 		}
 
+		void read_whole(cache_t &cache) {
+			bio::file_descriptor_source src_idx(m_index.get(), bio::never_close_handle);
+
+			bio::file_descriptor_source src_data(m_data.get(), bio::never_close_handle);
+			bio::filtering_streambuf<bio::input> in;
+			in.push(bio::zlib_decompressor());
+			in.push(src_data);
+
+			struct index idx;
+			while (true) {
+				if (bio::read<bio::file_descriptor_source>(src_idx, (char *)&idx, sizeof(struct index)) != sizeof(struct index))
+					break;
+
+				std::string str;
+				str.resize(idx.data_size);
+
+				if ((size_t)bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)str.data(), str.size()) != str.size())
+					break;
+
+				cache.insert(std::make_pair(key(&idx), str));
+			}
+		}
+
+		void truncate() {
+			m_data.truncate(0);
+			m_index.truncate(0);
+			m_chunk.truncate(0);
+		}
+
 	private:
 		mmap m_data;
 		mmap m_index;
@@ -91,9 +132,9 @@ class blob {
 		{
 			for (int i = 0; i < 2; ++i) {
 				std::ostringstream str;
-				str << path << "." << i;
+				str << path << "/smack." << i;
 
-				m_files.push_back(std::auto_ptr<blob_store<filter_t> >(new blob_store<filter_t>(str.str())));
+				m_files.push_back(boost::shared_ptr<blob_store<filter_t> >(new blob_store<filter_t>(str.str())));
 			}
 		}
 
@@ -131,11 +172,12 @@ class blob {
 			m_wcache.swap(tmp);
 			guard.unlock();
 
-			chunk<filter_t> c(m_bloom_size, tmp);
-			m_files[m_chunk_idx]->write(c);
+			write_chunk(tmp, tmp.size());
 
-			m_chunks.insert(std::make_pair(key(&c.ctl().start), c.ctl()));
-			return false;
+			if (m_chunks.size() > 5)
+				chunks_resort();
+
+			return m_wcache.size() >= m_cache_size;
 		}
 
 	private:
@@ -144,15 +186,33 @@ class blob {
 		cache_t m_wcache;
 		std::string m_path;
 		size_t m_cache_size;
-		int m_bloom_size;
-		int m_chunk_idx;
+		size_t m_bloom_size;
+		size_t m_chunk_idx;
 
-		std::vector<std::auto_ptr<blob_store<filter_t> > > m_files;
+		std::vector<boost::shared_ptr<blob_store<filter_t> > > m_files;
 		std::map<key, chunk_ctl> m_chunks;
+
+		void write_chunk(cache_t &cache, size_t num) {
+			chunk<filter_t> c(m_bloom_size, cache, num);
+			m_files[m_chunk_idx]->write(c);
+
+			m_chunks.insert(std::make_pair(key(&c.ctl().start), c.ctl()));
+		}
 
 		void chunks_resort() {
 			cache_t cache;
 
+			m_files[m_chunk_idx]->read_whole(cache);
+
+			if (++m_chunk_idx >= m_files.size())
+				m_chunk_idx = 0;
+
+			m_files[m_chunk_idx]->truncate();
+			m_chunks.erase(m_chunks.begin(), m_chunks.end());
+
+			while (cache.size()) {
+				write_chunk(cache, m_cache_size);
+			}
 		}
 };
 

@@ -4,7 +4,7 @@ project (smack)
 set (smack_VERSION "0.1.0")
 
 find_package(ZLIB REQUIRED)
-find_package(Boost REQUIRED filesystem system thread)
+find_package(Boost REQUIRED filesystem system thread iostreams)
 set(CMAKE_CXX_FLAGS "-g -W -Wall")
 
 include_directories("${PROJECT_BINARY_DIR}", "${PROJECT_SOURCE_DIR}/include")

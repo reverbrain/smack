@@ -121,6 +121,11 @@ class smack {
 					log(SMACK_LOG_NOTICE, "open: %s\n", p.filename().c_str());
 				}
 			}
+
+			if (blobs_.size() == 0)
+				blobs_.insert(std::make_pair(key(),
+						boost::shared_ptr<blob<filter_t> >(
+							new blob<filter_t>(path, bloom_size, max_cache_size))));
 		}
 
 		virtual ~smack() {

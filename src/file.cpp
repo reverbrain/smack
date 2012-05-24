@@ -65,6 +65,8 @@ void file::write(const char *data, size_t offset, size_t size)
 
 	if (offset > size_)
 		size_ = offset;
+
+	log(SMACK_LOG_DSA, "write: offset: %zu, size: %zu, file-size: %zu\n", offset, size, size_);
 }
 
 void file::read(char *data, size_t offset, size_t size)

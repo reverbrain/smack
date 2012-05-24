@@ -30,17 +30,17 @@ int main(int argc, char *argv[])
 	std::string path("/tmp/smack/test");
 	long diff;
 
-	rewrite_test();
+	//rewrite_test();
 
 	if (argc > 1)
 		path.assign(argv[1]);
 
 	log(SMACK_LOG_INFO, "starting test in %s\n", path.c_str());
 
-	size_t bloom_size = 1024 * 1024;
+	size_t bloom_size = 1024;
 	size_t max_cache_size = 1000;
 	int max_blob_num = 5000;
-	int cache_thread_num = 16;
+	int cache_thread_num = 1;
 	smack<zlib> s(path, bloom_size, max_cache_size, max_blob_num, cache_thread_num);
 
 	std::string data = "we;lkqrjw34npvqt789340cmq23p490crtm qwpe90xwp oqu;evoeiruqvwoeiruqvbpoeiqnpqvriuevqiouei uropqwie qropeiru qwopeir";
@@ -57,7 +57,7 @@ int main(int argc, char *argv[])
 #endif
 	//logger::instance()->init("/dev/stdout", 0xff);
 
-#if 0
+#if 1
 	log(SMACK_LOG_INFO, "starting write test\n");
 	gettimeofday(&start, NULL);
 	for (long i = 0; i < num; ++i) {
