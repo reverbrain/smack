@@ -4,26 +4,6 @@
 
 using namespace ioremap::smack;
 
-static void rewrite_test()
-{
-	smack<zlib> s("/tmp/smack/test", 100, 1, 1, 1);
-
-	std::string data = "01234567890";
-	std::string key_str = "test key";
-
-	for (int i = 0; i < 1; ++i) {
-		s.write(key(key_str), data.data(), data.size());
-
-		std::string nk = "qwe" + boost::lexical_cast<std::string>(i);
-		s.write(key(nk), data.data(), data.size());
-	}
-
-	key key(key_str);
-	std::string ret = s.read(key);
-	log(SMACK_LOG_INFO, "%s: size: %zd, data: '%s'\n", key_str.c_str(), ret.size(), ret.c_str());
-	exit(0);
-}
-
 int main(int argc, char *argv[])
 {
 	logger::instance()->init("/dev/stdout", 0xff);
@@ -41,7 +21,7 @@ int main(int argc, char *argv[])
 	size_t max_cache_size = 10;
 	int max_blob_num = 5000;
 	int cache_thread_num = 1;
-	smack<zlib> s(path, bloom_size, max_cache_size, max_blob_num, cache_thread_num);
+	smack<file> s(path, bloom_size, max_cache_size, max_blob_num, cache_thread_num);
 
 	std::string data = "we;lkqrjw34npvqt789340cmq23p490crtm qwpe90xwp oqu;evoeiruqvwoeiruqvbpoeiqnpqvriuevqiouei uropqwie qropeiru qwopeir";
 	std::string key_base = "qweqeqwe-";

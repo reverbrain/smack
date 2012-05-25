@@ -9,7 +9,6 @@
 #include <boost/thread.hpp>
 
 #include <smack/base.hpp>
-#include <smack/zlib.hpp>
 #include <smack/blob.hpp>
 
 namespace ioremap { namespace smack {
