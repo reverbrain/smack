@@ -27,15 +27,16 @@ struct chunk_ctl {
 	uint64_t		index_offset;
 	uint64_t		data_offset;
 	int			num;
-	int			pad;
+	int			bloom_size;
 } __attribute__ ((packed));
 
 class blob_store {
 	public:
-		blob_store(const std::string &path) :
+		blob_store(const std::string &path, int bloom_size) :
 		m_data(path + ".data"),
 		m_index(path + ".index"),
-		m_chunk(path + ".chunk")
+		m_chunk(path + ".chunk"),
+		m_bloom_size(bloom_size)
 		{
 		}
 
@@ -57,6 +58,8 @@ class blob_store {
 			out.push(bio::zlib_compressor());
 			out.push(dst_data);
 
+			bloom b(m_bloom_size);
+
 			int step_count = 0;
 			int step = 100;
 			size_t count = 0;
@@ -68,6 +71,8 @@ class blob_store {
 				idx.data_offset = data_offset;
 				idx.data_size = it->second.size();
 				bio::write<bio::file_descriptor_sink>(dst_idx, (char *)&idx, sizeof(struct index));
+
+				b.add(it->second.data(), it->second.size());
 
 				if (++count == num)
 					break;
@@ -84,8 +89,10 @@ class blob_store {
 			}
 
 			ctl.num = count;
+			ctl.bloom_size = m_bloom_size;
 
 			m_chunk.write((char *)&ctl, m_chunk.size(), sizeof(struct chunk_ctl));
+			m_chunk.write((char *)b.get().data(), m_chunk.size(), m_bloom_size / 8);
 
 			m_index.set_size(bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end));
 			m_data.set_size(bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end));
@@ -199,6 +206,7 @@ class blob_store {
 		mmap m_data;
 		file_index m_index;
 		mmap m_chunk;
+		int m_bloom_size;
 };
 
 template <class filter_t>
@@ -229,7 +237,7 @@ class blob {
 					}
 				}
 
-				m_files.push_back(boost::shared_ptr<blob_store>(new blob_store(str.str())));
+				m_files.push_back(boost::shared_ptr<blob_store>(new blob_store(str.str(), m_bloom_size)));
 			}
 
 			if (idx != -1)
