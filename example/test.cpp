@@ -38,7 +38,7 @@ int main(int argc, char *argv[])
 	log(SMACK_LOG_INFO, "starting test in %s\n", path.c_str());
 
 	size_t bloom_size = 1024;
-	size_t max_cache_size = 1000;
+	size_t max_cache_size = 10;
 	int max_blob_num = 5000;
 	int cache_thread_num = 1;
 	smack<zlib> s(path, bloom_size, max_cache_size, max_blob_num, cache_thread_num);
@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
 	std::string data = "we;lkqrjw34npvqt789340cmq23p490crtm qwpe90xwp oqu;evoeiruqvwoeiruqvbpoeiqnpqvriuevqiouei uropqwie qropeiru qwopeir";
 	std::string key_base = "qweqeqwe-";
 
-	long num = 100000000;
+	long num = 30;
 	struct timeval start, end;
 
 #if 0
@@ -96,6 +96,8 @@ int main(int argc, char *argv[])
 	logger::instance()->init("/dev/stdout", 10);
 #endif
 
+	sleep(3);
+
 	log(SMACK_LOG_INFO, "starting read test\n");
 	gettimeofday(&start, NULL);
 	for (long i = 0; i < num; ++i) {
@@ -119,6 +121,7 @@ int main(int argc, char *argv[])
 
 		} catch (const std::exception &e) {
 			log(SMACK_LOG_ERROR, "%s: could not read key '%s': %s\n", key.str(), str.str().c_str(), e.what());
+			break;
 			continue;
 		}
 

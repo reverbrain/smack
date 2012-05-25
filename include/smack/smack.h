@@ -16,7 +16,7 @@ struct index {
 	unsigned char		id[SMACK_KEY_SIZE];
 	uint64_t		ts;
 	uint64_t		flags;
-	uint64_t		data_offset;
+	uint64_t		data_offset; /* offset within chunk */
 	uint64_t		data_size;
 };
 

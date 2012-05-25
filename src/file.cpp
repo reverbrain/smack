@@ -99,6 +99,11 @@ size_t file::size() const
 	return size_;
 }
 
+void file::set_size(size_t size)
+{
+	size_ = size;
+}
+
 void file::truncate(ssize_t size)
 {
 	if ((size < 0) || (size > 1024 * 1024 * 1024)) {
