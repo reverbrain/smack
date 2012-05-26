@@ -11,6 +11,7 @@
 #include <boost/iostreams/device/file_descriptor.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
 #include <boost/iostreams/filter/zlib.hpp>
+#include <boost/iostreams/copy.hpp>
 
 #include <smack/base.hpp>
 
@@ -46,10 +47,13 @@ class blob_store {
 			memset(&ctl, 0, sizeof(struct chunk_ctl));
 
 			bio::file_descriptor_sink dst_idx(m_index.get(), bio::never_close_handle);
-			ctl.index_offset = bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end);
-
 			bio::file_descriptor_sink dst_data(m_data.get(), bio::never_close_handle);
-			ctl.data_offset = bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end);
+
+			m_index.set_size(bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end));
+			m_data.set_size(bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end));
+
+			ctl.index_offset = m_index.size();
+			ctl.data_offset = m_data.size();
 
 			size_t data_offset = 0;
 			size_t index_offset = ctl.index_offset;
@@ -65,28 +69,34 @@ class blob_store {
 			size_t count = 0;
 			cache_t::iterator it;
 			for (it = cache.begin(); it != cache.end(); ++it) {
-				bio::write<bio::filtering_streambuf<bio::output> >(out, it->second.data(), it->second.size());
-
 				struct index idx = *it->first.idx();
 				idx.data_offset = data_offset;
 				idx.data_size = it->second.size();
+
 				bio::write<bio::file_descriptor_sink>(dst_idx, (char *)&idx, sizeof(struct index));
+				bio::write<bio::filtering_streambuf<bio::output> >(out, it->second.data(), it->second.size());
 
 				b.add(it->second.data(), it->second.size());
-
-				if (++count == num)
-					break;
 
 				if (--step_count <= 0) {
 					step_count = step;
 					rcache.insert(std::make_pair(it->first, index_offset));
 
-					log(SMACK_LOG_NOTICE, "%s: rcache-stored: index-offset: %zu\n", it->first.str(), index_offset);
+					log(SMACK_LOG_DSA, "%s: rcache-stored: index-offset: %zu\n", it->first.str(), index_offset);
 				}
 
 				index_offset += sizeof(struct index);
 				data_offset += it->second.size();
+
+				if (++count == num) {
+					++it;
+					break;
+				}
 			}
+
+			cache.erase(cache.begin(), it);
+
+			out.strict_sync();
 
 			ctl.num = count;
 			ctl.bloom_size = m_bloom_size;
@@ -94,36 +104,40 @@ class blob_store {
 			m_chunk.write((char *)&ctl, m_chunk.size(), sizeof(struct chunk_ctl));
 			m_chunk.write((char *)b.get().data(), m_chunk.size(), m_bloom_size / 8);
 
-			m_index.set_size(bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end));
-			m_data.set_size(bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end));
-
-			log(SMACK_LOG_INFO, "stored-chunk: index-offset: %zd, num: %zd, data-offset: %zd, uncompressed-data-size: %zd\n",
-					ctl.index_offset, num, ctl.data_offset, data_offset - ctl.data_offset);
+			log(SMACK_LOG_INFO, "store-chunk: index-fd: %d, index-offset: %zd, num: %zd, "
+					"data-fd: %d, data-offset: %zd, uncompressed-data-size: %zd\n",
+					m_index.get(), ctl.index_offset, num,
+					m_data.get(), ctl.data_offset, data_offset);
 
 			return ctl;
 		}
 
-		void read_whole(cache_t &cache) {
+		void read_whole(std::vector<struct chunk_ctl> &chunks, cache_t &cache) {
 			bio::file_descriptor_source src_idx(m_index.get(), bio::never_close_handle);
-
-			bio::file_descriptor_source src_data(m_data.get(), bio::never_close_handle);
-			bio::filtering_streambuf<bio::input> in;
-			in.push(bio::zlib_decompressor());
-			in.push(src_data);
+			bio::seek<bio::file_descriptor_source>(src_idx, 0, std::ios_base::beg);
 
 			struct index idx;
-			while (true) {
-				if (bio::read<bio::file_descriptor_source>(src_idx, (char *)&idx, sizeof(struct index)) != sizeof(struct index))
-					break;
 
-				std::string str;
-				str.resize(idx.data_size);
+			for (std::vector<struct chunk_ctl>::iterator it = chunks.begin(); it != chunks.end(); ++it) {
+				bio::file_descriptor_source src_data(m_data.get(), bio::never_close_handle);
+				bio::seek<bio::file_descriptor_source>(src_data, it->data_offset, std::ios_base::beg);
 
-				if ((size_t)bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)str.data(), str.size()) != str.size())
-					break;
+				bio::filtering_streambuf<bio::input> in;
+				in.push(bio::zlib_decompressor());
+				in.push(src_data);
 
-				cache.insert(std::make_pair(key(&idx), str));
+				for (int i = 0; i < it->num; ++i) {
+					bio::read<bio::file_descriptor_source>(src_idx, (char *)&idx, sizeof(struct index));
+
+					std::string str;
+					str.resize(idx.data_size);
+
+					bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)str.data(), str.size());
+					cache.insert(std::make_pair(key(&idx), str));
+				}
 			}
+
+			log(SMACK_LOG_INFO, "read-whole: read %zd entries\n", cache.size());
 		}
 
 		void read_index(rcache_t &cache, size_t max_cache_size) {
@@ -184,16 +198,10 @@ class blob_store {
 			in.push(bio::zlib_decompressor());
 			in.push(src_data);
 
-			std::string ret;
-			ret.resize(l.data_size + l.data_offset);
+			std::ostringstream str;
+			bio::copy(in, str, l.data_size + l.data_offset);
 
-			if ((size_t)bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)ret.data(), ret.size()) != ret.size()) {
-				std::ostringstream str;
-				str << key.str() << ": read: could not read: " << l.data_size << " bytes";
-				throw std::out_of_range(str.str());
-			}
-
-			return ret.substr(l.data_offset, l.data_size);
+			return str.str().substr(l.data_offset, l.data_size);
 		}
 
 		void truncate() {
@@ -294,7 +302,7 @@ class blob {
 			guard.unlock();
 
 			std::string ret;
-			for (std::vector<struct chunk_ctl>::iterator it = m_chunk_pos.begin(); it != m_chunk_pos.end(); ++it) {
+			for (std::vector<struct chunk_ctl>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
 				try {
 					ret = m_files[m_chunk_idx]->chunk_read(key,
 						it->index_offset, it->index_offset + it->num * sizeof(struct index), *it);
@@ -359,7 +367,7 @@ class blob {
 		size_t m_chunk_idx;
 
 		std::vector<boost::shared_ptr<blob_store> > m_files;
-		std::vector<struct chunk_ctl> m_chunk_pos;
+		std::vector<struct chunk_ctl> m_chunks;
 		int m_chunks_unsorted;
 
 
@@ -367,7 +375,7 @@ class blob {
 		void write_chunk(cache_t &cache, size_t num, rcache_t &rcache) {
 			struct chunk_ctl ctl = m_files[m_chunk_idx]->store_chunk(cache, num, rcache);
 
-			m_chunk_pos.push_back(ctl);
+			m_chunks.push_back(ctl);
 			++m_chunks_unsorted;
 		}
 
@@ -375,12 +383,13 @@ class blob {
 			cache_t cache;
 			rcache_t rcache;
 
-			m_files[m_chunk_idx]->read_whole(cache);
+			m_files[m_chunk_idx]->read_whole(m_chunks, cache);
 
 			if (++m_chunk_idx >= m_files.size())
 				m_chunk_idx = 0;
 
 			m_files[m_chunk_idx]->truncate();
+			m_chunks.erase(m_chunks.begin(), m_chunks.end());
 
 			while (cache.size()) {
 				write_chunk(cache, m_cache_size, rcache);
@@ -389,19 +398,19 @@ class blob {
 			m_chunks_unsorted = 0;
 			m_rcache.swap(rcache);
 
-			log(SMACK_LOG_NOTICE, "chunks resorted: idx: %zd, chunks: %zd\n", m_chunk_idx, m_chunk_pos.size());
+			log(SMACK_LOG_INFO, "chunks resorted: idx: %zd, chunks: %zd\n", m_chunk_idx, m_chunks.size());
 		}
 
 		std::string read_from_rcache(key &key, size_t offset, size_t next_offset) {
 			std::vector<struct chunk_ctl>::iterator it;
-			for (it = m_chunk_pos.begin(); it != m_chunk_pos.end(); ++it) {
+			for (it = m_chunks.begin(); it != m_chunks.end(); ++it) {
 				if (it->index_offset > offset) {
 					--it;
 					break;
 				}
 			}
 
-			if (it == m_chunk_pos.end()) {
+			if (it == m_chunks.end()) {
 				log(SMACK_LOG_ERROR, "%s: rcache-read: index-offset: [%zd, %zd), no-chunk\n",
 						key.str(), offset, next_offset);
 				throw std::out_of_range("rcache-read: no-chunk");

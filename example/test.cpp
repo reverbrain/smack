@@ -6,7 +6,7 @@ using namespace ioremap::smack;
 
 int main(int argc, char *argv[])
 {
-	logger::instance()->init("/dev/stdout", 0xff);
+	logger::instance()->init("/dev/stdout", 15);
 	std::string path("/tmp/smack/test");
 	long diff;
 
@@ -26,7 +26,7 @@ int main(int argc, char *argv[])
 	std::string data = "we;lkqrjw34npvqt789340cmq23p490crtm qwpe90xwp oqu;evoeiruqvwoeiruqvbpoeiqnpqvriuevqiouei uropqwie qropeiru qwopeir";
 	std::string key_base = "qweqeqwe-";
 
-	long num = 30;
+	long num = 1000;
 	struct timeval start, end;
 
 #if 0

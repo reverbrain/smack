@@ -1,5 +1,8 @@
 add_executable(smack_test test.cpp)
 target_link_libraries(smack_test smack)
 
-add_executable(smack_index_iter iter.cpp)
+add_executable(smack_index_iter read.cpp)
 target_link_libraries(smack_index_iter smack)
+
+add_executable(smack_zlib_chunk_test zlib.cpp)
+target_link_libraries(smack_zlib_chunk_test smack)
