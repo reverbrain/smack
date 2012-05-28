@@ -32,10 +32,15 @@ static unsigned int h2(const char *data, int size)
 }
 #endif
 
-bloom::bloom(int bits) : m_bits(bits)
+bloom::bloom(int bloom_size)
 {
 	add_hashes();
-	m_data.resize(bits / 8);
+	m_data.resize(bloom_size);
+}
+
+bloom::bloom(std::vector<char> &data) : m_data(data)
+{
+	add_hashes();
 }
 
 bloom::~bloom()
@@ -47,7 +52,7 @@ void bloom::add(const char *data, int size)
 	unsigned int h, byte, bit;
 
 	for (std::vector<bloom_hash_t>::iterator it = m_hashes.begin(); it < m_hashes.end(); ++it) {
-		h = (*it)(data, size) % m_bits;
+		h = (*it)(data, size) % (m_data.size() * 8);
 		byte = h / 8;
 		bit = h % 8;
 
@@ -60,7 +65,7 @@ bool bloom::check(const char *data, int size)
 	unsigned int h, byte, bit;
 
 	for (std::vector<bloom_hash_t>::iterator it = m_hashes.begin(); it < m_hashes.end(); ++it) {
-		h = (*it)(data, size) % m_bits;
+		h = (*it)(data, size) % (m_data.size() * 8);
 		byte = h / 8;
 		bit = h % 8;
 
@@ -79,7 +84,18 @@ void bloom::add_hashes(void)
 #endif
 }
 
-std::vector<char> &bloom::get()
+std::vector<char> &bloom::data()
 {
 	return m_data;
 }
+
+std::string bloom::str(void)
+{
+	char tmp[m_data.size() * 2 + 1];
+	for (size_t i = 0; i < m_data.size(); ++i) {
+		sprintf((char *)&tmp[2*i], "%02hhx", m_data[i]);
+	}
+	tmp[2 * m_data.size()] = '\0';
+	return std::string(tmp);
+}
+

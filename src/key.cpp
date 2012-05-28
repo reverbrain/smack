@@ -54,7 +54,7 @@ char *key::str(int len) const
 	/* Yes, this is kind of non-constant behaviour */
 	for (int i = 0; i < len; ++i)
 		sprintf((char *)&raw_str[2*i], "%02x", idx_.id[i]);
-	((char *)raw_str)[2 * len + 1] = '\0';
+	((char *)raw_str)[2 * len] = '\0';
 	return (char *)raw_str;
 }
 

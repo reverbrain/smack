@@ -20,6 +20,7 @@
 #include <boost/thread/mutex.hpp>
 #include <boost/shared_array.hpp>
 #include <boost/shared_ptr.hpp>
+#include <boost/lexical_cast.hpp>
 
 #include <smack/smack.h>
 
@@ -268,16 +269,17 @@ typedef unsigned int (* bloom_hash_t)(const char *data, int size);
 
 class bloom {
 	public:
-		bloom(int bits = 1024 * 1024);
+		bloom(int bloom_size = 128);
+		bloom(std::vector<char> &data);
 		virtual ~bloom();
 
 		void add(const char *data, int size);
 		bool check(const char *data, int size);
 
-		std::vector<char> &get();
+		std::vector<char> &data();
+		std::string str(void);
 
 	private:
-		int m_bits;
 		std::vector<bloom_hash_t> m_hashes;
 		std::vector<char> m_data;
 

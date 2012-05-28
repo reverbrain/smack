@@ -103,28 +103,41 @@ class smack {
 			if (!fs::exists(path))
 				throw std::runtime_error("Directory " + path + " does not exist");
 
+			std::vector<std::string> blobs;
+
 			fs::directory_iterator end_itr;
 			for (fs::directory_iterator itr(path); itr != end_itr; ++itr) {
-				int num;
+				fs::path p(*itr);
 
-				if (!fs::is_regular_file(*itr))
+				if (!fs::is_regular_file(p))
 					continue;
 
-				fs::path p(*itr);
-				if (sscanf(p.filename().c_str(), "smack.%d.data", &num) == 1) {
-					std::ostringstream tmp;
-					tmp << "smack." << num << ".data";
-					if (tmp.str() != p.filename())
+				int num;
+				if (sscanf(p.filename().c_str(), "smack.%d.", &num) == 1) {
+					std::vector<std::string>::iterator sit;
+					std::string tmp = "smack." + boost::lexical_cast<std::string>(num);
+
+					for (sit = blobs.begin(); sit != blobs.end(); ++sit) {
+						if (*sit == tmp)
+							break;
+					}
+					if (sit != blobs.end())
 						continue;
 
-					log(SMACK_LOG_NOTICE, "open: %s\n", p.filename().c_str());
+					blobs.push_back(tmp);
+
+					std::string file = path + "/" + tmp;
+					log(SMACK_LOG_NOTICE, "open: %s\n", file.c_str());
+
+					boost::shared_ptr<blob<filter_t> > b(new blob<filter_t>(file, bloom_size, max_cache_size));
+					blobs_.insert(std::make_pair(b->start(), b));
 				}
 			}
 
 			if (blobs_.size() == 0)
 				blobs_.insert(std::make_pair(key(),
 						boost::shared_ptr<blob<filter_t> >(
-							new blob<filter_t>(path, bloom_size, max_cache_size))));
+							new blob<filter_t>(path + "/smack.0", bloom_size, max_cache_size))));
 		}
 
 		virtual ~smack() {
