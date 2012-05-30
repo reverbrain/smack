@@ -6,6 +6,8 @@
 #include <iostream>
 #include <sstream>
 
+#include <boost/version.hpp>
+
 #include <boost/iostreams/device/file_descriptor.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
 #include <boost/iostreams/copy.hpp>
@@ -14,11 +16,18 @@
 #include <smack/base.hpp>
 
 namespace bio = boost::iostreams;
+
+#if BOOST_VERSION < 104400
+#define file_desriptor_close_handle	false
+#else
+#define file_desriptor_close_handle	bio::never_close_handle
+#endif
+
 using namespace ioremap::smack;
 
 static size_t test_write(int fd, const std::string &test)
 {
-	bio::file_descriptor_sink dst(fd, bio::never_close_handle);
+	bio::file_descriptor_sink dst(fd, file_desriptor_close_handle);
 
 	bio::filtering_streambuf<bio::output> out;
 	out.push(bio::zlib_compressor());
@@ -35,7 +44,7 @@ static size_t test_write(int fd, const std::string &test)
 
 static std::string test_read(int fd, size_t pos)
 {
-	bio::file_descriptor_source src(fd, bio::never_close_handle);
+	bio::file_descriptor_source src(fd, file_desriptor_close_handle);
 
 	bio::seek<bio::file_descriptor_source>(src, pos, std::ios_base::beg);
 	bio::filtering_streambuf<bio::input> in;

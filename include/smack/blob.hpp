@@ -8,6 +8,8 @@
 
 #include <set>
 
+#include <boost/version.hpp>
+
 #include <boost/iostreams/device/file_descriptor.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
 #include <boost/iostreams/filter/zlib.hpp>
@@ -23,6 +25,13 @@ typedef std::map<key, std::string, keycomp> cache_t;
 typedef std::map<key, size_t, keycomp> rcache_t;
 
 namespace bio = boost::iostreams;
+
+#if BOOST_VERSION < 104400
+#define file_desriptor_close_handle	false
+#else
+#define file_desriptor_close_handle	bio::never_close_handle
+#endif
+
 
 struct chunk_ctl {
 	uint64_t		index_offset;		/* index offset in index file for given chunk */
@@ -51,8 +60,17 @@ class chunk : public bloom {
 			return &m_ctl;
 		}
 
+		void set_start(const struct index *idx) {
+			m_key.set(idx);
+		}
+
+		const key &start(void) const {
+			return m_key;
+		}
+
 	private:
 		struct chunk_ctl m_ctl;
+		key m_key;
 };
 
 class blob_store {
@@ -70,8 +88,8 @@ class blob_store {
 		chunk store_chunk(cache_t &cache, size_t num, rcache_t &rcache) {
 			chunk ch(m_bloom_size);
 
-			bio::file_descriptor_sink dst_idx(m_index.get(), bio::never_close_handle);
-			bio::file_descriptor_sink dst_data(m_data.get(), bio::never_close_handle);
+			bio::file_descriptor_sink dst_idx(m_index.get(), file_desriptor_close_handle);
+			bio::file_descriptor_sink dst_data(m_data.get(), file_desriptor_close_handle);
 
 			m_index.set_size(bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end));
 			m_data.set_size(bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end));
@@ -81,6 +99,8 @@ class blob_store {
 
 			ch.ctl()->index_offset = index_offset;
 			ch.ctl()->data_offset = m_data.size();
+
+			ch.set_start(cache.begin()->first.idx());
 
 			{
 				bio::filtering_streambuf<bio::output> out;
@@ -127,7 +147,7 @@ class blob_store {
 			 * Looks like streambuf deletes all components we pushed, including 'sink' which
 			 * is dst_data in our case
 			 */
-			bio::file_descriptor_sink dst_data_tmp(m_data.get(), bio::never_close_handle);
+			bio::file_descriptor_sink dst_data_tmp(m_data.get(), file_desriptor_close_handle);
 			size_t data_size = bio::seek<bio::file_descriptor_sink>(dst_data_tmp, 0, std::ios_base::end);
 
 			/*
@@ -149,10 +169,10 @@ class blob_store {
 		}
 
 		void read_chunk(chunk &ch, cache_t &cache) {
-			bio::file_descriptor_source src_idx(m_index.get(), bio::never_close_handle);
+			bio::file_descriptor_source src_idx(m_index.get(), file_desriptor_close_handle);
 			bio::seek<bio::file_descriptor_source>(src_idx, ch.ctl()->index_offset, std::ios_base::beg);
 
-			bio::file_descriptor_source src_data(m_data.get(), bio::never_close_handle);
+			bio::file_descriptor_source src_data(m_data.get(), file_desriptor_close_handle);
 			bio::seek<bio::file_descriptor_source>(src_data, ch.ctl()->data_offset, std::ios_base::beg);
 
 			bio::filtering_streambuf<bio::input> in;
@@ -183,7 +203,7 @@ class blob_store {
 			} catch (const std::runtime_error &) {
 			}
 
-			bio::file_descriptor_source src_idx(m_index.get(), bio::never_close_handle);
+			bio::file_descriptor_source src_idx(m_index.get(), file_desriptor_close_handle);
 
 			struct index idx;
 			int count = 0;
@@ -227,7 +247,7 @@ class blob_store {
 					key.str(), index_offset, next_index_offset,
 					l.index_offset[0], l.data_offset, ch.ctl()->data_offset, l.data_size);
 
-			bio::file_descriptor_source src_data(m_data.get(), bio::never_close_handle);
+			bio::file_descriptor_source src_data(m_data.get(), file_desriptor_close_handle);
 
 			/* seeking to the start of the chunk */
 			size_t pos = bio::seek<bio::file_descriptor_source>(src_data, ch.ctl()->data_offset, std::ios_base::beg);
@@ -427,29 +447,65 @@ class blob {
 			return m_wcache.size() >= m_cache_size;
 		}
 
-	private:
-		key m_start;
-		boost::mutex m_write_lock;
-		boost::mutex m_disk_lock;
-		boost::condition m_cond;
-		cache_t m_wcache;
-		std::set<key, keycomp> m_remove_cache;
-		rcache_t m_rcache;
-		std::string m_path;
-		size_t m_cache_size;
-		size_t m_bloom_size;
-		size_t m_chunk_idx;
+		void split(const key &base_split_key, boost::shared_ptr<blob<filter_t> > sb) {
+			key key(base_split_key);
+			/*
+			 * resort all chunks on disk
+			 */
+			boost::mutex::scoped_lock disk_guard(m_disk_lock);
+			m_chunks_unsorted = m_chunks.size();
+			write_cache();
+			disk_guard.unlock();
 
-		std::vector<boost::shared_ptr<blob_store> > m_files;
-		std::vector<chunk> m_chunks;
-		int m_chunks_unsorted;
+			/* lock write cache lock to prevent cache update while we copy chunks */
+			boost::mutex::scoped_lock write_guard(m_write_lock);
+			/* lock disk cache update */
+			disk_guard.lock();
 
+			cache_t cache;
+			/*
+			 * find chunks which contain data more than our split key
+			 *
+			 * will split not on particular key, but chunk boundary
+			 * select chunks which contain keys which are more or equal to requested key
+			 */
+			bool boundary_updated = false;
+			std::vector<chunk>::iterator split_it = m_chunks.end();
+			for (std::vector<chunk>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
+				if (it->start() >= key) {
+					m_files[m_chunk_idx]->read_chunk(*it, cache);
 
+					if (!boundary_updated) {
+						split_it = it;
+						key.set(it->start().idx());
+						boundary_updated = true;
+					}
 
-		void write_chunk(cache_t &cache, size_t num, rcache_t &rcache) {
-			m_chunks.push_back(m_files[m_chunk_idx]->store_chunk(cache, num, rcache));
+					continue;
+				}
+			}
 
-			++m_chunks_unsorted;
+			for (cache_t::iterator it = cache.begin(); it != cache.end(); ++it)
+				sb.write(it->first, it->second.data(), it->second.size());
+			cache.erase(cache.begin());
+
+			m_chunks.erase(split_it, m_chunks.end());
+			disk_guard.unlock();
+
+			/*
+			 * check if someone added data into wcache while we processed data on disk
+			 * write cache lock is still being held
+			 */
+			cache_t::iterator wcache_split_it = m_wcache.end();
+			for (cache_t::iterator it = m_wcache.begin(); it != m_wcache.end(); ++it) {
+				if (it->first >= key)
+					sb.write(it->first, it->second.data(), it->second.size());
+			}
+
+			if (wcache_split_it != m_wcache.end())
+				m_wcache.erase(wcache_split_it, m_wcache.end());
+
+			write_guard.unlock();
 		}
 
 		void chunks_resort() {
@@ -477,6 +533,31 @@ class blob {
 			m_chunks_unsorted = 0;
 
 			log(SMACK_LOG_INFO, "chunks resorted: idx: %zd, chunks: %zd\n", m_chunk_idx, m_chunks.size());
+		}
+
+
+	private:
+		key m_start;
+		boost::mutex m_write_lock;
+		boost::mutex m_disk_lock;
+		boost::condition m_cond;
+		cache_t m_wcache;
+		std::set<key, keycomp> m_remove_cache;
+		rcache_t m_rcache;
+		std::string m_path;
+		size_t m_cache_size;
+		size_t m_bloom_size;
+		size_t m_chunk_idx;
+
+		std::vector<boost::shared_ptr<blob_store> > m_files;
+		std::vector<chunk> m_chunks;
+		int m_chunks_unsorted;
+
+
+		void write_chunk(cache_t &cache, size_t num, rcache_t &rcache) {
+			m_chunks.push_back(m_files[m_chunk_idx]->store_chunk(cache, num, rcache));
+
+			++m_chunks_unsorted;
 		}
 
 		std::string read_from_rcache(key &key, size_t offset, size_t next_offset) {
