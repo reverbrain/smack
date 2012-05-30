@@ -21,9 +21,8 @@ struct index {
 };
 
 enum smack_storage_type {
-	SMACK_STORAGE_FILE = 0,
-	SMACK_STORAGE_MMAP,
-	SMACK_STORAGE_ZLIB,
+	SMACK_STORAGE_ZLIB = 0,
+	__SMACK_STORAGE_MAX
 };
 
 struct smack_ctl;
@@ -38,6 +37,7 @@ struct smack_init_ctl {
 	int			max_cache_size;
 	int			max_blob_num;
 	int			cache_thread_num;
+
 	enum			smack_storage_type type;
 };
 
