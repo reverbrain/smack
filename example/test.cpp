@@ -6,7 +6,7 @@ using namespace ioremap::smack;
 
 int main(int argc, char *argv[])
 {
-	logger::instance()->init("/dev/stdout", 15);
+	logger::instance()->init("/dev/stdout", 10);
 	std::string path("/tmp/smack/test");
 	long diff;
 
@@ -17,16 +17,16 @@ int main(int argc, char *argv[])
 
 	log(SMACK_LOG_INFO, "starting test in %s\n", path.c_str());
 
-	size_t bloom_size = 128;
-	size_t max_cache_size = 100;
-	int max_blob_num = 3;
-	int cache_thread_num = 1;
+	size_t bloom_size = 1024;
+	size_t max_cache_size = 1000;
+	int max_blob_num = 100;
+	int cache_thread_num = 4;
 	smack<file> s(path, bloom_size, max_cache_size, max_blob_num, cache_thread_num);
 
 	std::string data = "we;lkqrjw34npvqt789340cmq23p490crtm qwpe90xwp oqu;evoeiruqvwoeiruqvbpoeiqnpqvriuevqiouei uropqwie qropeiru qwopeir";
 	std::string key_base = "qweqeqwe-";
 
-	long num = 1000, i;
+	long num = 1000000, i;
 	struct timeval start, end;
 
 #if 0
@@ -37,7 +37,7 @@ int main(int argc, char *argv[])
 #endif
 	//logger::instance()->init("/dev/stdout", 0xff);
 
-#if 1
+#if 0
 	log(SMACK_LOG_INFO, "starting write test\n");
 	gettimeofday(&start, NULL);
 	for (i = 0; i < num; ++i) {
@@ -64,7 +64,7 @@ int main(int argc, char *argv[])
 				i, diff / 1000000., i * 1000000 / diff, diff / i);
 	}
 
-	sleep(3);
+	s.sync();
 #endif
 
 #if 0

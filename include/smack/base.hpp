@@ -170,6 +170,8 @@ class file_index : public file {
 			low = l.index_offset[0] / sizeof(struct index) - 1;
 			high = l.index_offset[1] / sizeof(struct index);
 
+			log(SMACK_LOG_DSA, "%s: start-lookup: low: %d, high: %d\n", k.str(), low, high);
+
 			l.exact = false;
 
 			while (high - low > 1) {
@@ -179,8 +181,8 @@ class file_index : public file {
 
 				int cmp = memcmp(idx.id, k.id(), SMACK_KEY_SIZE);
 
-				log(SMACK_LOG_DSA, "%s: lookup: %d/%zd: cmp: %s, offset: %llu, size: %llu, cmp: %d\n",
-						k.str(), i, l.index_offset[1] / sizeof(struct index),
+				log(SMACK_LOG_DSA, "%s: lookup: %d|%d, %d/%zd: cmp: %s, offset: %llu, size: %llu, cmp: %d\n",
+						k.str(), low, high, i, l.index_offset[1] / sizeof(struct index),
 						key(idx.id, SMACK_KEY_SIZE).str(),
 						(unsigned long long)idx.data_offset, (unsigned long long)idx.data_size, cmp);
 

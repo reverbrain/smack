@@ -77,13 +77,10 @@ class cache_processor {
 					processed_++;
 				}
 
-				if (b->write_cache()) {
-					notify(b);
-				} else {
-					boost::mutex::scoped_lock guard(lock_);
-					processed_--;
-					cond_.notify_all();
-				}
+				while (b->write_cache()) ;
+				boost::mutex::scoped_lock guard(lock_);
+				processed_--;
+				cond_.notify_all();
 			}
 		}
 
@@ -147,10 +144,11 @@ class smack {
 			sync();
 		}
 
-		void write(const key &k, const char *data, size_t size) {
-			boost::shared_ptr<blob<filter_t> > curb = blob_lookup(k, false);
+		void write(const key &key, const char *data, size_t size) {
+			boost::shared_ptr<blob<filter_t> > curb = blob_lookup(key, false);
 
-			if (curb->write(k, data, size)) {
+			if (curb->write(key, data, size)) {
+#if 1
 				boost::mutex::scoped_lock guard(m_blobs_lock);
 
 				size_t num, data_size;
@@ -159,7 +157,7 @@ class smack {
 				curb->size(num, data_size, have_split);
 
 				if ((blobs_.size() < max_blob_num_) &&
-						((num > 5 * max_cache_size_) || (data_size > 10 * 1024 * 1024)) &&
+						(num > 50 * max_cache_size_) &&
 						!have_split) {
 					blob_num_++;
 					boost::shared_ptr<blob<filter_t> > b(new blob<filter_t>(
@@ -170,18 +168,18 @@ class smack {
 
 					blobs_.insert(std::make_pair(b->start(), b));
 				}
-
+#endif
 				proc_.notify(curb);
 			}
 		}
 
-		std::string read(key &k) {
-			return blob_lookup(k, true)->read(k);
+		std::string read(key &key) {
+			return blob_lookup(key, true)->read(key);
 		}
 
-		void remove(const key &k) {
-			boost::shared_ptr<blob<filter_t> > curb = blob_lookup(k, true);
-			if (curb->remove(k))
+		void remove(const key &key) {
+			boost::shared_ptr<blob<filter_t> > curb = blob_lookup(key, true);
+			if (curb->remove(key))
 				proc_.notify(curb);
 		}
 
