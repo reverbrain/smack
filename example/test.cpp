@@ -18,8 +18,8 @@ int main(int argc, char *argv[])
 	log(SMACK_LOG_INFO, "starting test in %s\n", path.c_str());
 
 	size_t bloom_size = 128;
-	size_t max_cache_size = 10;
-	int max_blob_num = 5000;
+	size_t max_cache_size = 100;
+	int max_blob_num = 3;
 	int cache_thread_num = 1;
 	smack<file> s(path, bloom_size, max_cache_size, max_blob_num, cache_thread_num);
 

@@ -131,6 +131,9 @@ class smack {
 
 					boost::shared_ptr<blob<filter_t> > b(new blob<filter_t>(file, bloom_size, max_cache_size));
 					blobs_.insert(std::make_pair(b->start(), b));
+
+					if (num > blob_num_)
+						blob_num_ = num;
 				}
 			}
 
@@ -148,6 +151,26 @@ class smack {
 			boost::shared_ptr<blob<filter_t> > curb = blob_lookup(k, false);
 
 			if (curb->write(k, data, size)) {
+				boost::mutex::scoped_lock guard(m_blobs_lock);
+
+				size_t num, data_size;
+				bool have_split;
+
+				curb->size(num, data_size, have_split);
+
+				if ((blobs_.size() < max_blob_num_) &&
+						((num > 5 * max_cache_size_) || (data_size > 10 * 1024 * 1024)) &&
+						!have_split) {
+					blob_num_++;
+					boost::shared_ptr<blob<filter_t> > b(new blob<filter_t>(
+								path_base_ + "/smack." + boost::lexical_cast<std::string>(blob_num_),
+								bloom_size_, max_cache_size_));
+
+					curb->set_split_dst(b);
+
+					blobs_.insert(std::make_pair(b->start(), b));
+				}
+
 				proc_.notify(curb);
 			}
 		}
@@ -178,6 +201,7 @@ class smack {
 
 	private:
 		std::map<key, boost::shared_ptr<blob<filter_t> >, keycomp> blobs_;
+		boost::mutex m_blobs_lock;
 		std::string path_base_;
 		int bloom_size_;
 		int blob_num_;
@@ -186,6 +210,8 @@ class smack {
 		cache_processor<filter_t> proc_;
 
 		boost::shared_ptr<blob<filter_t> > blob_lookup(const key &k, bool check_start_key = false) {
+			boost::mutex::scoped_lock guard(m_blobs_lock);
+
 			if (blobs_.size() == 0)
 				throw std::out_of_range("smack::blob-lookup::no-blobs");
 			

@@ -76,6 +76,7 @@ class chunk : public bloom {
 class blob_store {
 	public:
 		blob_store(const std::string &path, int bloom_size) :
+		m_path_base(path),
 		m_data(path + ".data"),
 		m_index(path + ".index"),
 		m_chunk(path + ".chunk"),
@@ -160,9 +161,9 @@ class blob_store {
 			m_chunk.write((char *)ch.ctl(), m_chunk.size(), sizeof(struct chunk_ctl));
 			m_chunk.write((char *)ch.data().data(), m_chunk.size(), ch.data().size());
 
-			log(SMACK_LOG_INFO, "store-chunk: index-fd: %d, index-offset: %zd, num: %zd, "
+			log(SMACK_LOG_INFO, "%s: store-chunk: index-fd: %d, index-offset: %zd, num: %zd, "
 					"data-fd: %d, data-offset: %zd, uncompressed-data-size: %zd, compressed-data-size: %zd\n",
-					m_index.get(), ch.ctl()->index_offset, num,
+					m_path_base.c_str(), m_index.get(), ch.ctl()->index_offset, num,
 					m_data.get(), ch.ctl()->data_offset, data_offset, ch.ctl()->data_size);
 
 			return ch;
@@ -190,7 +191,7 @@ class blob_store {
 				cache.insert(std::make_pair(key(&idx), str));
 			}
 
-			log(SMACK_LOG_INFO, "read-chunk: read %zd entries\n", cache.size());
+			log(SMACK_LOG_INFO, "%s: read-chunk: read %zd entries\n", m_path_base.c_str(), cache.size());
 		}
 
 		void read_index(rcache_t &cache, size_t max_cache_size, std::vector<chunk> &chunks) {
@@ -242,9 +243,9 @@ class blob_store {
 				throw std::out_of_range(str.str());
 			}
 
-			log(SMACK_LOG_NOTICE, "%s: chunk-read: req-index-offset: %zd-%zd, "
+			log(SMACK_LOG_NOTICE, "%s: %s: chunk-read: req-index-offset: %zd-%zd, "
 					"index-offset: %zd, data-offset: %zd, chunk-start-offset: %zd, data-size: %zd\n",
-					key.str(), index_offset, next_index_offset,
+					m_path_base.c_str(), key.str(), index_offset, next_index_offset,
 					l.index_offset[0], l.data_offset, ch.ctl()->data_offset, l.data_size);
 
 			bio::file_descriptor_source src_data(m_data.get(), file_desriptor_close_handle);
@@ -273,7 +274,17 @@ class blob_store {
 			m_chunk.truncate(0);
 		}
 
+		/* returns current number of records and data size on disk */
+		void size(size_t &num, size_t &data_size) {
+			bio::file_descriptor_sink idx(m_index.get(), file_desriptor_close_handle);
+			bio::file_descriptor_sink data(m_data.get(), file_desriptor_close_handle);
+
+			num = bio::seek<bio::file_descriptor_sink>(idx, 0, std::ios_base::end) / sizeof(struct index);
+			data_size = bio::seek<bio::file_descriptor_sink>(data, 0, std::ios_base::end);
+		}
+
 	private:
+		std::string m_path_base;
 		mmap m_data;
 		file_index m_index;
 		mmap m_chunk;
@@ -291,9 +302,9 @@ class blob_store {
 
 				chunk ch(ctl, data);
 
-				log(SMACK_LOG_INFO, "read_chunks: %zd: index-offset: %zd, data-offset: %zd, "
+				log(SMACK_LOG_INFO, "%s: read_chunks: %zd: index-offset: %zd, data-offset: %zd, "
 						"compressed-size: %zd, num: %d, bloom-size: %d\n",
-						chunks.size(), ctl.index_offset, ctl.data_offset, ctl.data_size,
+						m_path_base.c_str(), chunks.size(), ctl.index_offset, ctl.data_offset, ctl.data_size,
 						ctl.num, ctl.bloom_size);
 
 				chunks.push_back(ch);
@@ -431,85 +442,45 @@ class blob {
 		}
 
 		bool write_cache() {
-			boost::mutex::scoped_lock guard(m_write_lock);
+			boost::mutex::scoped_lock write_guard(m_write_lock);
 
 			cache_t tmp;
 			m_wcache.swap(tmp);
-			guard.unlock();
+			write_guard.unlock();
 
 			boost::mutex::scoped_lock disk_guard(m_disk_lock);
-			if (tmp.size())
-				write_chunk(tmp, tmp.size(), m_rcache);
 
-			if (m_chunks_unsorted > 10)
-				chunks_resort();
+			/* resort all chunks when number of unsorted chunks is more than 10 % + 10 chunks */
+			//if ((m_chunks_unsorted > (int)m_chunks.size() / 10 + 10) || m_split_dst) {
+			if ((m_chunks_unsorted >= 5) || m_split_dst) {
+				/* if dst is present, then resort all chunks */
+				if (m_split_dst)
+					m_chunks_unsorted = m_chunks.size();
+
+				chunks_resort(tmp);
+
+				if (m_split_dst) {
+					write_guard.lock();
+					/*
+					 * check if someone added data into wcache while we processed data on disk
+					 * write cache lock is still being held
+					 */
+					cache_t::iterator wcache_split_it = m_wcache.lower_bound(m_split_dst->start());
+					for (cache_t::iterator it = wcache_split_it; it != m_wcache.end(); ++it)
+						m_split_dst->write(it->first, it->second.data(), it->second.size());
+
+					m_wcache.erase(wcache_split_it, m_wcache.end());
+
+					m_split_dst.reset();
+				}
+			} else if (tmp.size()) {
+				write_chunk(tmp, tmp.size(), m_rcache);
+			}
 
 			return m_wcache.size() >= m_cache_size;
 		}
 
-		void split(const key &base_split_key, boost::shared_ptr<blob<filter_t> > sb) {
-			key key(base_split_key);
-			/*
-			 * resort all chunks on disk
-			 */
-			boost::mutex::scoped_lock disk_guard(m_disk_lock);
-			m_chunks_unsorted = m_chunks.size();
-			write_cache();
-			disk_guard.unlock();
-
-			/* lock write cache lock to prevent cache update while we copy chunks */
-			boost::mutex::scoped_lock write_guard(m_write_lock);
-			/* lock disk cache update */
-			disk_guard.lock();
-
-			cache_t cache;
-			/*
-			 * find chunks which contain data more than our split key
-			 *
-			 * will split not on particular key, but chunk boundary
-			 * select chunks which contain keys which are more or equal to requested key
-			 */
-			bool boundary_updated = false;
-			std::vector<chunk>::iterator split_it = m_chunks.end();
-			for (std::vector<chunk>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
-				if (it->start() >= key) {
-					m_files[m_chunk_idx]->read_chunk(*it, cache);
-
-					if (!boundary_updated) {
-						split_it = it;
-						key.set(it->start().idx());
-						boundary_updated = true;
-					}
-
-					continue;
-				}
-			}
-
-			for (cache_t::iterator it = cache.begin(); it != cache.end(); ++it)
-				sb.write(it->first, it->second.data(), it->second.size());
-			cache.erase(cache.begin());
-
-			m_chunks.erase(split_it, m_chunks.end());
-			disk_guard.unlock();
-
-			/*
-			 * check if someone added data into wcache while we processed data on disk
-			 * write cache lock is still being held
-			 */
-			cache_t::iterator wcache_split_it = m_wcache.end();
-			for (cache_t::iterator it = m_wcache.begin(); it != m_wcache.end(); ++it) {
-				if (it->first >= key)
-					sb.write(it->first, it->second.data(), it->second.size());
-			}
-
-			if (wcache_split_it != m_wcache.end())
-				m_wcache.erase(wcache_split_it, m_wcache.end());
-
-			write_guard.unlock();
-		}
-
-		void chunks_resort() {
-			cache_t cache;
+		void chunks_resort(cache_t &cache) {
 			rcache_t rcache;
 
 			int num = 0;
@@ -521,20 +492,47 @@ class blob {
 			}
 			m_chunks.erase(m_chunks.begin() + m_chunks.size() - m_chunks_unsorted, m_chunks.end());
 
+			/* update data file index */
 			if (++m_chunk_idx >= m_files.size())
 				m_chunk_idx = 0;
-
+			/* truncate new data files */
 			m_files[m_chunk_idx]->truncate();
 
-			while (cache.size()) {
+			/* split cache if m_split_dst is set, this will cut part of the cache which is >= than m_split_dst->start() */
+			if (m_split_dst)
+				split(m_split_dst->start(), cache);
+
+			while (cache.size())
 				write_chunk(cache, m_cache_size, rcache);
-			}
 
 			m_chunks_unsorted = 0;
 
 			log(SMACK_LOG_INFO, "chunks resorted: idx: %zd, chunks: %zd\n", m_chunk_idx, m_chunks.size());
 		}
 
+		/* returns current number of records and data size on disk */
+		void size(size_t &num, size_t &data_size, bool &have_split) {
+			boost::mutex::scoped_lock disk_guard(m_disk_lock);
+
+			have_split = false;
+			if (m_split_dst)
+				have_split = true;
+
+			m_files[m_chunk_idx]->size(num, data_size);
+			log(SMACK_LOG_NOTICE, "%s: size-check: num: %zd, data-size: %zd, have-split: %d\n",
+					m_start.str(), num, data_size, have_split);
+		}
+
+		void set_split_dst(boost::shared_ptr<blob<filter_t> > dst) {
+			boost::mutex::scoped_lock disk_guard(m_disk_lock);
+			if (m_split_dst)
+				return;
+
+			m_split_dst = dst;
+			m_split_dst->start().set(m_last_average_key.idx());
+
+			log(SMACK_LOG_NOTICE, "%s: set-split at: %s\n", m_start.str(), m_last_average_key.str());
+		}
 
 	private:
 		key m_start;
@@ -548,13 +546,23 @@ class blob {
 		size_t m_cache_size;
 		size_t m_bloom_size;
 		size_t m_chunk_idx;
+		boost::shared_ptr<blob<filter_t> > m_split_dst;
 
 		std::vector<boost::shared_ptr<blob_store> > m_files;
 		std::vector<chunk> m_chunks;
 		int m_chunks_unsorted;
 
+		key m_last_average_key;
 
 		void write_chunk(cache_t &cache, size_t num, rcache_t &rcache) {
+			int average = cache.size() / 2;
+			for (cache_t::iterator it = cache.begin(); it != cache.end(); ++it) {
+				if (--average == 0) {
+					m_last_average_key = it->first;
+					break;
+				}
+			}
+
 			m_chunks.push_back(m_files[m_chunk_idx]->store_chunk(cache, num, rcache));
 
 			++m_chunks_unsorted;
@@ -583,6 +591,20 @@ class blob {
 			ret = m_files[m_chunk_idx]->chunk_read(key, offset, next_offset, *it);
 			return ret;
 		}
+
+		void split(const key &key, cache_t &cache) {
+			size_t orig_size = cache.size();
+
+			cache_t::iterator split_it = cache.lower_bound(key);
+			for (cache_t::iterator it = cache.begin(); it != cache.end(); ++it)
+				m_split_dst->write(it->first, it->second.data(), it->second.size());
+
+			cache.erase(split_it, cache.end());
+
+			log(SMACK_LOG_NOTICE, "%s: split to new blob: %zd entries, old blob: %zd entries\n",
+					key.str(), orig_size - cache.size(), cache.size());
+		}
+
 };
 
 }}
