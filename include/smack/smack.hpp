@@ -1,7 +1,8 @@
 #ifndef __SMACK_SMACK_HPP
 #define __SMACK_SMACK_HPP
 
-#include <queue>
+#include <algorithm>
+#include <deque>
 
 #include <boost/bind.hpp>
 #include <boost/filesystem.hpp>
@@ -34,7 +35,10 @@ class cache_processor {
 
 		void notify(boost::shared_ptr<blob<filter_t> > b) {
 			boost::mutex::scoped_lock guard(lock_);
-			blobs_.push(b);
+			typename std::deque<boost::shared_ptr<blob<filter_t> > >::iterator it = std::find(blobs_.begin(), blobs_.end(), b);
+			if (it == blobs_.end())
+				blobs_.push_back(b);
+
 			cond_.notify_all();
 		}
 
@@ -49,7 +53,7 @@ class cache_processor {
 	private:
 		boost::mutex lock_;
 		boost::condition cond_;
-		std::queue<boost::shared_ptr<blob<filter_t> > > blobs_;
+		std::deque<boost::shared_ptr<blob<filter_t> > > blobs_;
 		boost::thread_group group_;
 		int need_exit_;
 		int processed_;
@@ -72,7 +76,7 @@ class cache_processor {
 						continue;
 
 					b = blobs_.front();
-					blobs_.pop();
+					blobs_.pop_front();
 
 					processed_++;
 				}

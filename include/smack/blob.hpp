@@ -90,7 +90,11 @@ class blob_store {
 			chunk ch(m_bloom_size);
 
 			bio::file_descriptor_sink dst_idx(m_index.get(), file_desriptor_close_handle);
+#if BOOST_VERSION < 104400
+			bio::file_descriptor_sink dst_data(dup(m_data.get()), file_desriptor_close_handle);
+#else
 			bio::file_descriptor_sink dst_data(m_data.get(), file_desriptor_close_handle);
+#endif
 
 			m_index.set_size(bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end));
 			m_data.set_size(bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end));
@@ -134,6 +138,7 @@ class blob_store {
 					data_offset += it->second.size();
 
 					if (++count == num) {
+						ch.end().set(it->first.idx());
 						++it;
 						break;
 					}
@@ -159,28 +164,58 @@ class blob_store {
 			 */
 			ch.ctl()->data_size = data_size - ch.ctl()->data_offset;
 
-			m_chunk.write((char *)ch.ctl(), m_chunk.size(), sizeof(struct chunk_ctl));
-			m_chunk.write((char *)ch.data().data(), m_chunk.size(), ch.data().size());
+			store_chunk_meta(ch);
 
-			log(SMACK_LOG_NOTICE, "%s: store-chunk: index-fd: %d, index-offset: %zd, num: %zd, "
+			log(SMACK_LOG_NOTICE, "%s: store-chunk: start: %s, end: %s, index-fd: %d, index-offset: %zd, num: %d, "
 					"data-fd: %d, data-offset: %zd, uncompressed-data-size: %zd, compressed-data-size: %zd\n",
-					m_path_base.c_str(), m_index.get(), ch.ctl()->index_offset, num,
-					m_data.get(), ch.ctl()->data_offset, data_offset, ch.ctl()->data_size);
+					m_path_base.c_str(), ch.start().str(), ch.end().str(), m_index.get(), ch.ctl()->index_offset,
+					ch.ctl()->num, m_data.get(), ch.ctl()->data_offset, data_offset, ch.ctl()->data_size);
 
 			return ch;
+		}
+
+		void write_raw(chunk &ch, int src_index_fd, int src_data_fd) {
+			bio::file_descriptor_source src_idx(src_index_fd, file_desriptor_close_handle);
+			bio::file_descriptor_source src_data(src_data_fd, file_desriptor_close_handle);
+
+			bio::file_descriptor_sink dst_idx(m_index.get(), file_desriptor_close_handle);
+			bio::file_descriptor_sink dst_data(m_data.get(), file_desriptor_close_handle);
+
+			size_t data_offset = bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end);
+			size_t index_offset = bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end);
+
+			bio::copy<bio::file_descriptor_source, bio::file_descriptor_sink>(src_data, dst_data, ch.ctl()->data_size);
+			bio::copy<bio::file_descriptor_source, bio::file_descriptor_sink>(src_idx, dst_idx, ch.ctl()->num * sizeof(struct index));
+
+			store_chunk_meta(ch);
+
+			log(SMACK_LOG_NOTICE, "%s: write-raw: start: %s, end: %s, data-offset: %zd, data-size: %zd, "
+					"index-offset: %zd, index-size: %zd, num: %d\n",
+					m_path_base.c_str(), ch.start().str(), ch.end().str(),
+					data_offset, ch.ctl()->data_size, index_offset, ch.ctl()->num * sizeof(struct index), ch.ctl()->num);
+		}
+
+		void copy_chunk(chunk &ch, blob_store &dst) {
+			dst.write_raw(ch, m_index.get(), m_data.get());
 		}
 
 		void read_chunk(chunk &ch, cache_t &cache) {
 			bio::file_descriptor_source src_idx(m_index.get(), file_desriptor_close_handle);
 			bio::seek<bio::file_descriptor_source>(src_idx, ch.ctl()->index_offset, std::ios_base::beg);
 
+#if BOOST_VERSION < 104400
+			bio::file_descriptor_source src_data(dup(m_data.get()), file_desriptor_close_handle);
+#else
 			bio::file_descriptor_source src_data(m_data.get(), file_desriptor_close_handle);
+#endif
 			bio::seek<bio::file_descriptor_source>(src_data, ch.ctl()->data_offset, std::ios_base::beg);
 
 			bio::filtering_streambuf<bio::input> in;
 			in.push(bio::zlib_decompressor());
 			in.push(src_data);
 
+			log(SMACK_LOG_NOTICE, "%s: read-chunk: start: %s, end: %s, num: %d\n",
+					m_path_base.c_str(), ch.start().str(), ch.end().str(), ch.ctl()->num);
 			struct index idx;
 			for (int i = 0; i < ch.ctl()->num; ++i) {
 				bio::read<bio::file_descriptor_source>(src_idx, (char *)&idx, sizeof(struct index));
@@ -191,8 +226,6 @@ class blob_store {
 				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)str.data(), str.size());
 				cache.insert(std::make_pair(key(&idx), str));
 			}
-
-			log(SMACK_LOG_NOTICE, "%s: read-chunk: read %zd entries\n", m_path_base.c_str(), cache.size());
 		}
 
 		void read_index(rcache_t &cache, size_t max_cache_size, std::vector<chunk> &chunks) {
@@ -249,7 +282,11 @@ class blob_store {
 					m_path_base.c_str(), key.str(), index_offset, next_index_offset,
 					l.index_offset[0], l.data_offset, ch.ctl()->data_offset, l.data_size, ch.ctl()->num);
 
+#if BOOST_VERSION < 104400
+			bio::file_descriptor_source src_data(dup(m_data.get()), file_desriptor_close_handle);
+#else
 			bio::file_descriptor_source src_data(m_data.get(), file_desriptor_close_handle);
+#endif
 
 			/* seeking to the start of the chunk */
 			size_t pos = bio::seek<bio::file_descriptor_source>(src_data, ch.ctl()->data_offset, std::ios_base::beg);
@@ -291,6 +328,11 @@ class blob_store {
 		mmap m_chunk;
 		int m_bloom_size;
 
+		void store_chunk_meta(chunk &ch) {
+			m_chunk.write((char *)ch.ctl(), m_chunk.size(), sizeof(struct chunk_ctl));
+			m_chunk.write((char *)ch.data().data(), m_chunk.size(), ch.data().size());
+		}
+
 		void read_chunks(std::vector<chunk> &chunks) {
 			size_t offset = 0;
 			while (true) {
@@ -311,7 +353,7 @@ class blob_store {
 				ch.start().set(&start);
 				ch.end().set(&end);
 
-				log(SMACK_LOG_INFO, "%s: read_chunks: %zd: index-offset: %zd, data-offset: %zd, "
+				log(SMACK_LOG_NOTICE, "%s: read_chunks: %zd: index-offset: %zd, data-offset: %zd, "
 						"compressed-size: %zd, num: %d, bloom-size: %d, start: %s, end: %s\n",
 						m_path_base.c_str(), chunks.size(), ctl.index_offset, ctl.data_offset, ctl.data_size,
 						ctl.num, ctl.bloom_size, ch.start().str(), ch.end().str());
@@ -344,12 +386,16 @@ class blob {
 
 				err = stat((prefix + ".data").c_str(), &st);
 				if (err == 0) {
+					log(SMACK_LOG_NOTICE, "%s: old-idx: %d, old-mtime: %ld, old-size: %zd, mtime: %ld, size: %zd\n",
+							prefix.c_str(), idx, mtime, size, st.st_mtime, st.st_size);
 					if (st.st_mtime > mtime) {
 						mtime = st.st_mtime;
+						size = st.st_size;
 						idx = i;
 					} else if (st.st_mtime == mtime) {
 						if (st.st_size > size) {
 							idx = i;
+							mtime = st.st_mtime;
 							size = st.st_size;
 						}
 					}
@@ -433,7 +479,7 @@ class blob {
 
 				try {
 					/* replace it with proper rcache check */
-					ret = m_files[m_chunk_idx]->chunk_read(key,
+					ret = current_bstore()->chunk_read(key,
 						it->ctl()->index_offset, it->ctl()->index_offset + it->ctl()->num * sizeof(struct index), *it);
 					break;
 				} catch (const std::out_of_range &e) {
@@ -474,9 +520,10 @@ class blob {
 
 			boost::mutex::scoped_lock disk_guard(m_disk_lock);
 
-			/* resort all chunks when number of unsorted chunks is more than 10 chunks */
-			if ((m_chunks_unsorted > 10) || m_split_dst || tmp.size() > m_cache_size) {
-				m_chunks_unsorted = m_chunks.size();
+			if ((m_chunks_unsorted > 50) || m_split_dst) {
+				if ((m_chunks_unsorted > 50) || m_split_dst)
+					m_chunks_unsorted = m_chunks.size();
+
 				chunks_resort(tmp);
 
 				if (m_split_dst) {
@@ -494,7 +541,8 @@ class blob {
 					m_split_dst.reset();
 				}
 			} else if (tmp.size()) {
-				write_chunk(tmp, tmp.size(), m_rcache);
+				rcache_t rcache;
+				write_cache_to_chunks(tmp, rcache);
 			}
 
 			return m_wcache.size() >= m_cache_size;
@@ -508,7 +556,7 @@ class blob {
 			if (m_split_dst)
 				have_split = true;
 
-			m_files[m_chunk_idx]->size(num, data_size);
+			current_bstore()->size(num, data_size);
 			log(SMACK_LOG_NOTICE, "%s: size-check: num: %zd, data-size: %zd, have-split: %d\n",
 					m_start.str(), num, data_size, have_split);
 		}
@@ -533,7 +581,7 @@ class blob {
 		std::string m_path;
 		size_t m_cache_size;
 		size_t m_bloom_size;
-		size_t m_chunk_idx;
+		int m_chunk_idx;
 		boost::shared_ptr<blob<filter_t> > m_split_dst;
 
 		std::vector<boost::shared_ptr<blob_store> > m_files;
@@ -541,6 +589,10 @@ class blob {
 		int m_chunks_unsorted;
 
 		key m_last_average_key;
+
+		boost::shared_ptr<blob_store> current_bstore(void) {
+			return m_files[m_chunk_idx];
+		}
 
 		void write_chunk(cache_t &cache, size_t num, rcache_t &rcache) {
 			int average = cache.size() / 2;
@@ -551,9 +603,19 @@ class blob {
 				}
 			}
 
-			m_chunks.push_back(m_files[m_chunk_idx]->store_chunk(cache, num, rcache));
+			m_chunks.push_back(current_bstore()->store_chunk(cache, num, rcache));
 
 			++m_chunks_unsorted;
+		}
+
+		void write_cache_to_chunks(cache_t &cache, rcache_t &rcache) {
+			while (cache.size()) {
+				size_t size = m_cache_size;
+				if (cache.size() < m_cache_size * 1.5)
+					size = cache.size();
+
+				write_chunk(cache, size, rcache);
+			}
 		}
 
 		void chunks_resort(cache_t &cache) {
@@ -561,31 +623,38 @@ class blob {
 
 			int num = 0;
 			for (std::vector<chunk>::reverse_iterator it = m_chunks.rbegin(); it != m_chunks.rend(); ++it) {
-				m_files[m_chunk_idx]->read_chunk(*it, cache);
+				current_bstore()->read_chunk(*it, cache);
 
 				if (++num == m_chunks_unsorted)
 					break;
 			}
 			m_chunks.erase(m_chunks.begin() + m_chunks.size() - m_chunks_unsorted, m_chunks.end());
 
+			boost::shared_ptr<blob_store> src = current_bstore();
+
+			int prev_idx = m_chunk_idx;
 			/* update data file index */
-			if (++m_chunk_idx >= m_files.size())
+			if (++m_chunk_idx >= (int)m_files.size())
 				m_chunk_idx = 0;
 			/* truncate new data files */
-			m_files[m_chunk_idx]->truncate();
+			current_bstore()->truncate();
+			log(SMACK_LOG_NOTICE, "%s: resort: idx: %d -> %d, copy-chunks: %zd, resort-keys: %zd\n",
+					m_path.c_str(), prev_idx, m_chunk_idx, m_chunks.size(), cache.size());
+
+			for (std::vector<chunk>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
+				src->copy_chunk(*it, *current_bstore());
+			}
 
 			/* split cache if m_split_dst is set, this will cut part of the cache which is >= than m_split_dst->start() */
 			if (m_split_dst)
 				split(m_split_dst->start(), cache);
 
-			while (cache.size())
-				write_chunk(cache, m_cache_size, rcache);
-
+			write_cache_to_chunks(cache, rcache);
 			m_chunks_unsorted = 0;
 
 			size_t idx_num, data_size;
-			m_files[m_chunk_idx]->size(idx_num, data_size);
-			log(SMACK_LOG_NOTICE, "%s: %s: chunks resorted: idx: %zd, chunks: %zd, num: %zd, data-size: %zd, split: %s\n",
+			current_bstore()->size(idx_num, data_size);
+			log(SMACK_LOG_INFO, "%s: %s: chunks resorted: idx: %d, chunks: %zd, num: %zd, data-size: %zd, split: %s\n",
 					m_path.c_str(), m_start.str(), m_chunk_idx, m_chunks.size(),
 					idx_num, data_size, m_split_dst ? m_split_dst->start().str() : "none");
 		}
@@ -611,7 +680,7 @@ class blob {
 
 			std::string ret;
 
-			ret = m_files[m_chunk_idx]->chunk_read(key, offset, next_offset, *it);
+			ret = current_bstore()->chunk_read(key, offset, next_offset, *it);
 			return ret;
 		}
 
