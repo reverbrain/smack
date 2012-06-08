@@ -10,13 +10,15 @@ namespace bio = boost::iostreams;
 
 class chunk_reader {
 	public:
-		chunk_reader(const std::string &path, bool show_data, const key &key, const int klen) : m_st(path, 128), m_show_data(show_data) {
-			m_st.read_index(0, m_chunks, m_chunks_unsorted);
+		chunk_reader(const std::string &path, bool show_data, const key &key, const int klen) :
+		m_path(path), m_st(path, 128), m_show_data(show_data) {
+			m_st.read_index(m_chunks, m_chunks_unsorted, 0);
 
 			find(key, klen);
 		}
 
 	private:
+		std::string m_path;
 		blob_store m_st;
 		bool m_show_data;
 		std::map<key, chunk, keycomp> m_chunks;
@@ -26,6 +28,9 @@ class chunk_reader {
 			for (std::vector<chunk>::iterator it = m_chunks_unsorted.begin(); it != m_chunks_unsorted.end(); ++it) {
 				find_in_chunk(*it, key, klen);
 			}
+
+			if (!m_chunks.size())
+				return;
 
 			if (klen != 0) {
 				std::map<class key, chunk, keycomp>::iterator it = m_chunks.upper_bound(key);
@@ -54,8 +59,9 @@ class chunk_reader {
 
 				if (!klen || !memcmp(key.idx()->id, idx->id, klen)) {
 					if (!found) {
-						log(SMACK_LOG_INFO, "chunk: start: %s, end: %s, index-offset: %zd, num: %d, "
+						log(SMACK_LOG_INFO, "chunk: %s: start: %s, end: %s, index-offset: %zd, num: %d, "
 								"data-offset: %zd, data-size: %zd\n",
+								m_path.c_str(),
 								ch.start().str(), ch.end().str(), ch.ctl()->index_offset, ch.ctl()->num,
 								ch.ctl()->data_offset, ch.ctl()->data_size);
 						found = true;

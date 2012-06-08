@@ -80,6 +80,8 @@ int main(int argc, char *argv[])
 	logger::instance()->init("/dev/stdout", 10);
 #endif
 
+	//logger::instance()->init("/dev/stdout", 0xff);
+
 	log(SMACK_LOG_INFO, "starting read test\n");
 	gettimeofday(&start, NULL);
 	for (i = 0; i < num; ++i) {
