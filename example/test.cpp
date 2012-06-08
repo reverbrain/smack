@@ -37,7 +37,7 @@ int main(int argc, char *argv[])
 #endif
 	//logger::instance()->init("/dev/stdout", 0xff);
 
-#if 0
+#if 1
 	log(SMACK_LOG_INFO, "starting write test\n");
 	gettimeofday(&start, NULL);
 	for (i = 0; i < num; ++i) {

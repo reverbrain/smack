@@ -10,6 +10,7 @@
 
 #include <boost/version.hpp>
 
+#include <boost/thread/condition.hpp>
 #include <boost/iostreams/device/file_descriptor.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
 #include <boost/iostreams/filter/zlib.hpp>
@@ -86,7 +87,7 @@ class blob_store {
 		}
 
 		/* returns index offset of the new chunk written */
-		chunk store_chunk(cache_t &cache, size_t num, rcache_t &rcache) {
+		chunk store_chunk(cache_t &cache, size_t num) {
 			chunk ch(m_bloom_size);
 
 			bio::file_descriptor_sink dst_idx(m_index.get(), file_desriptor_close_handle);
@@ -96,8 +97,16 @@ class blob_store {
 			bio::file_descriptor_sink dst_data(m_data.get(), file_desriptor_close_handle);
 #endif
 
-			m_index.set_size(bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end));
-			m_data.set_size(bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end));
+			try {
+				m_index.set_size(bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end));
+				m_data.set_size(bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end));
+			} catch (const std::exception &e) {
+				log(SMACK_LOG_ERROR, "%s: store-chunk: start: %s, end: %s, "
+						"index-fd: %d, data-fd: %d, num: %zd, cache-size: %zd: %s\n",
+						m_path_base.c_str(), ch.start().str(), ch.end().str(),
+						m_index.get(), m_data.get(), num, cache.size(),	e.what());
+				throw;
+			}
 
 			size_t data_offset = 0;
 			size_t index_offset = m_index.size();
@@ -113,8 +122,8 @@ class blob_store {
 				out.push(bio::zlib_compressor());
 				out.push(dst_data);
 
-				int step_count = 0;
-				int step = 100;
+				out.set_auto_close(false);
+
 				size_t count = 0;
 				cache_t::iterator it;
 				for (it = cache.begin(); it != cache.end(); ++it) {
@@ -126,13 +135,6 @@ class blob_store {
 					bio::write<bio::filtering_streambuf<bio::output> >(out, it->second.data(), it->second.size());
 
 					ch.add((char *)idx.id, SMACK_KEY_SIZE);
-
-					if (--step_count <= 0) {
-						step_count = step;
-						rcache.insert(std::make_pair(it->first, index_offset));
-
-						log(SMACK_LOG_DSA, "%s: rcache-stored: index-offset: %zu\n", it->first.str(), index_offset);
-					}
 
 					index_offset += sizeof(struct index);
 					data_offset += it->second.size();
@@ -213,6 +215,7 @@ class blob_store {
 			bio::filtering_streambuf<bio::input> in;
 			in.push(bio::zlib_decompressor());
 			in.push(src_data);
+			in.set_auto_close(false);
 
 			log(SMACK_LOG_NOTICE, "%s: read-chunk: start: %s, end: %s, num: %d\n",
 					m_path_base.c_str(), ch.start().str(), ch.end().str(), ch.ctl()->num);
@@ -228,30 +231,10 @@ class blob_store {
 			}
 		}
 
-		void read_index(rcache_t &cache, size_t max_cache_size, std::vector<chunk> &chunks) {
-			size_t index_size = m_index.size() / sizeof(struct index);
-			int step = index_size / max_cache_size + 1;
-			size_t offset = 0;
-
+		void read_index(size_t , std::map<key, chunk, keycomp> &chunks, std::vector<chunk> &chunks_unsorted) {
 			try {
-				read_chunks(chunks);
+				read_chunks(chunks, chunks_unsorted);
 			} catch (const std::runtime_error &) {
-			}
-
-			bio::file_descriptor_source src_idx(m_index.get(), file_desriptor_close_handle);
-
-			struct index idx;
-			int count = 0;
-			while (true) {
-				if (bio::read<bio::file_descriptor_source>(src_idx, (char *)&idx, sizeof(struct index)) != sizeof(struct index))
-					break;
-
-				if (--count <= 0) {
-					cache.insert(std::make_pair(key(&idx), offset));
-					count = step;
-				}
-
-				offset += sizeof(struct index);
 			}
 		}
 
@@ -299,6 +282,7 @@ class blob_store {
 			bio::filtering_streambuf<bio::input> in;
 			in.push(bio::zlib_decompressor());
 			in.push(src_data);
+			in.set_auto_close(false);
 
 			std::ostringstream str;
 			bio::copy(in, str, l.data_size + l.data_offset);
@@ -333,7 +317,7 @@ class blob_store {
 			m_chunk.write((char *)ch.data().data(), m_chunk.size(), ch.data().size());
 		}
 
-		void read_chunks(std::vector<chunk> &chunks) {
+		void read_chunks(std::map<key, chunk, keycomp> &chunks, std::vector<chunk> &chunks_unsorted) {
 			size_t offset = 0;
 			while (true) {
 				struct chunk_ctl ctl;
@@ -358,7 +342,11 @@ class blob_store {
 						m_path_base.c_str(), chunks.size(), ctl.index_offset, ctl.data_offset, ctl.data_size,
 						ctl.num, ctl.bloom_size, ch.start().str(), ch.end().str());
 
-				chunks.push_back(ch);
+				if ((chunks.size() == 0) || (ch.start() >= chunks.rbegin()->second.end()))
+					chunks.insert(std::make_pair(ch.start(), ch));
+				else
+					chunks_unsorted.push_back(ch);
+
 				offset += sizeof(struct chunk_ctl) + ctl.bloom_size;
 			}
 		}
@@ -371,8 +359,7 @@ class blob {
 		m_path(path),
 		m_cache_size(max_cache_size),
 		m_bloom_size(bloom_size),
-		m_chunk_idx(0),
-		m_chunks_unsorted(0)
+		m_chunk_idx(0)
 		{
 			time_t mtime = 0;
 			ssize_t size = 0;
@@ -406,16 +393,18 @@ class blob {
 
 			if (idx != -1) {
 				m_chunk_idx = idx;
-				log(SMACK_LOG_INFO, "%s: reading-index: idx: %d\n", m_path.c_str(), idx);
-				m_files[idx]->read_index(m_rcache, m_cache_size, m_chunks);
+				m_files[idx]->read_index(m_cache_size, m_chunks, m_chunks_unsorted);
+				log(SMACK_LOG_INFO, "%s: reading-index: idx: %d, sorted: %zd, unsorted: %zd\n",
+						m_path.c_str(), idx, m_chunks.size(), m_chunks_unsorted.size());
+
+				if (m_chunks_unsorted.size()) {
+					cache_t cache;
+					chunks_resort(cache);
+				}
 			}
 
 			if (m_chunks.size()) {
-				m_start = m_chunks.begin()->start();
-				for (std::vector<chunk>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
-					if (m_start > it->start())
-						m_start = it->start();
-				}
+				m_start = m_chunks.begin()->second.start();
 			}
 		}
 
@@ -469,28 +458,50 @@ class blob {
 			guard.unlock();
 
 			std::string ret;
-			for (std::vector<chunk>::reverse_iterator it = m_chunks.rbegin(); it != m_chunks.rend(); ++it) {
-				log(SMACK_LOG_NOTICE, "%s: read key: chunk: start: %s, end: %s\n",
-						key.str(), it->start().str(), it->end().str());
-				if (key > it->end())
-					continue;
-				if (key < it->start())
-					continue;
+
+			if (m_chunks.size()) {
+				std::map<class key, chunk, keycomp>::iterator it = m_chunks.upper_bound(key);
+				--it;
 
 				try {
+					log(SMACK_LOG_NOTICE, "%s: read key: map chunk: start: %s, end: %s\n",
+							key.str(), it->second.start().str(), it->second.end().str());
+
 					/* replace it with proper rcache check */
 					ret = current_bstore()->chunk_read(key,
-						it->ctl()->index_offset, it->ctl()->index_offset + it->ctl()->num * sizeof(struct index), *it);
-					break;
+						it->second.ctl()->index_offset,
+						it->second.ctl()->index_offset + it->second.ctl()->num * sizeof(struct index),
+						it->second);
 				} catch (const std::out_of_range &e) {
-					continue;
 				}
 			}
 
 			if (ret.size() == 0) {
-				std::ostringstream str;
-				str << key.str() << ": read: no data";
-				throw std::out_of_range(str.str());
+				for (std::vector<chunk>::reverse_iterator it = m_chunks_unsorted.rbegin(); it != m_chunks_unsorted.rend(); ++it) {
+					log(SMACK_LOG_NOTICE, "%s: read key: unsorted chunk: start: %s, end: %s\n",
+							key.str(), it->start().str(), it->end().str());
+					if (key < it->start())
+						continue;
+					if (key > it->end())
+						continue;
+
+					try {
+						/* replace it with proper rcache check */
+						ret = current_bstore()->chunk_read(key,
+							it->ctl()->index_offset,
+							it->ctl()->index_offset + it->ctl()->num * sizeof(struct index),
+							*it);
+						break;
+					} catch (const std::out_of_range &e) {
+						continue;
+					}
+				}
+
+				if (ret.size() == 0) {
+					std::ostringstream str;
+					str << key.str() << ": read: no data";
+					throw std::out_of_range(str.str());
+				}
 			}
 
 			return ret;
@@ -520,10 +531,7 @@ class blob {
 
 			boost::mutex::scoped_lock disk_guard(m_disk_lock);
 
-			if ((m_chunks_unsorted > 50) || m_split_dst) {
-				if ((m_chunks_unsorted > 50) || m_split_dst)
-					m_chunks_unsorted = m_chunks.size();
-
+			if ((m_chunks_unsorted.size() > 50) || m_split_dst) {
 				chunks_resort(tmp);
 
 				if (m_split_dst) {
@@ -541,8 +549,7 @@ class blob {
 					m_split_dst.reset();
 				}
 			} else if (tmp.size()) {
-				rcache_t rcache;
-				write_cache_to_chunks(tmp, rcache);
+				write_cache_to_chunks(tmp, false);
 			}
 
 			return m_wcache.size() >= m_cache_size;
@@ -577,7 +584,6 @@ class blob {
 		boost::condition m_cond;
 		cache_t m_wcache;
 		std::set<key, keycomp> m_remove_cache;
-		rcache_t m_rcache;
 		std::string m_path;
 		size_t m_cache_size;
 		size_t m_bloom_size;
@@ -585,8 +591,8 @@ class blob {
 		boost::shared_ptr<blob<filter_t> > m_split_dst;
 
 		std::vector<boost::shared_ptr<blob_store> > m_files;
-		std::vector<chunk> m_chunks;
-		int m_chunks_unsorted;
+		std::map<key, chunk, keycomp> m_chunks;
+		std::vector<chunk> m_chunks_unsorted;
 
 		key m_last_average_key;
 
@@ -594,7 +600,7 @@ class blob {
 			return m_files[m_chunk_idx];
 		}
 
-		void write_chunk(cache_t &cache, size_t num, rcache_t &rcache) {
+		void write_chunk(cache_t &cache, size_t num, bool sorted) {
 			int average = cache.size() / 2;
 			for (cache_t::iterator it = cache.begin(); it != cache.end(); ++it) {
 				if (--average == 0) {
@@ -603,32 +609,38 @@ class blob {
 				}
 			}
 
-			m_chunks.push_back(current_bstore()->store_chunk(cache, num, rcache));
-
-			++m_chunks_unsorted;
+			chunk ch = current_bstore()->store_chunk(cache, num);
+			if (sorted) {
+				m_chunks.insert(std::make_pair(ch.start(), ch));
+			} else {
+				m_chunks_unsorted.push_back(ch);
+			}
 		}
 
-		void write_cache_to_chunks(cache_t &cache, rcache_t &rcache) {
+		void write_cache_to_chunks(cache_t &cache, bool sorted) {
 			while (cache.size()) {
 				size_t size = m_cache_size;
 				if (cache.size() < m_cache_size * 1.5)
 					size = cache.size();
 
-				write_chunk(cache, size, rcache);
+				write_chunk(cache, size, sorted);
 			}
 		}
 
 		void chunks_resort(cache_t &cache) {
-			rcache_t rcache;
-
-			int num = 0;
-			for (std::vector<chunk>::reverse_iterator it = m_chunks.rbegin(); it != m_chunks.rend(); ++it) {
+			for (std::vector<chunk>::reverse_iterator it = m_chunks_unsorted.rbegin(); it != m_chunks_unsorted.rend(); ++it) {
 				current_bstore()->read_chunk(*it, cache);
-
-				if (++num == m_chunks_unsorted)
-					break;
 			}
-			m_chunks.erase(m_chunks.begin() + m_chunks.size() - m_chunks_unsorted, m_chunks.end());
+			m_chunks_unsorted.erase(m_chunks_unsorted.begin(), m_chunks_unsorted.end());
+
+			/* always resort all chunks */
+			if (m_split_dst || true) {
+				for (std::map<key, chunk, keycomp>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
+					current_bstore()->read_chunk(it->second, cache);
+				}
+
+				m_chunks.erase(m_chunks.begin(), m_chunks.end());
+			}
 
 			boost::shared_ptr<blob_store> src = current_bstore();
 
@@ -641,29 +653,28 @@ class blob {
 			log(SMACK_LOG_NOTICE, "%s: resort: idx: %d -> %d, copy-chunks: %zd, resort-keys: %zd\n",
 					m_path.c_str(), prev_idx, m_chunk_idx, m_chunks.size(), cache.size());
 
-			for (std::vector<chunk>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
-				src->copy_chunk(*it, *current_bstore());
+			for (std::map<key, chunk, keycomp>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
+				src->copy_chunk(it->second, *current_bstore());
 			}
 
 			/* split cache if m_split_dst is set, this will cut part of the cache which is >= than m_split_dst->start() */
 			if (m_split_dst)
 				split(m_split_dst->start(), cache);
 
-			write_cache_to_chunks(cache, rcache);
-			m_chunks_unsorted = 0;
+			write_cache_to_chunks(cache, true);
 
 			size_t idx_num, data_size;
 			current_bstore()->size(idx_num, data_size);
-			log(SMACK_LOG_INFO, "%s: %s: chunks resorted: idx: %d, chunks: %zd, num: %zd, data-size: %zd, split: %s\n",
+			log(SMACK_LOG_NOTICE, "%s: %s: chunks resorted: idx: %d, chunks: %zd, num: %zd, data-size: %zd, split: %s\n",
 					m_path.c_str(), m_start.str(), m_chunk_idx, m_chunks.size(),
 					idx_num, data_size, m_split_dst ? m_split_dst->start().str() : "none");
 		}
 
-
+#if 0
 		std::string read_from_rcache(key &key, size_t offset, size_t next_offset) {
-			std::vector<chunk>::iterator it;
+			std::map<class key, chunk, keycomp>::iterator it;
 			for (it = m_chunks.begin(); it != m_chunks.end(); ++it) {
-				if (it->ctl()->index_offset > offset) {
+				if (it->second.ctl()->index_offset > offset) {
 					--it;
 					break;
 				}
@@ -683,6 +694,7 @@ class blob {
 			ret = current_bstore()->chunk_read(key, offset, next_offset, *it);
 			return ret;
 		}
+#endif
 
 		void split(const key &key, cache_t &cache) {
 			size_t orig_size = cache.size();
