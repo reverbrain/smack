@@ -32,13 +32,13 @@ static unsigned int h2(const char *data, int size)
 }
 #endif
 
-bloom::bloom(int bloom_size)
+bloom::bloom(const int bloom_size)
 {
 	add_hashes();
 	m_data.resize(bloom_size);
 }
 
-bloom::bloom(std::vector<char> &data) : m_data(data)
+bloom::bloom(const std::vector<char> &data) : m_data(data)
 {
 	add_hashes();
 }
@@ -84,7 +84,7 @@ void bloom::add_hashes(void)
 #endif
 }
 
-std::vector<char> &bloom::data()
+const std::vector<char> &bloom::data() const
 {
 	return m_data;
 }

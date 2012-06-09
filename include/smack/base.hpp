@@ -43,6 +43,7 @@ class key {
 		bool operator ==(const key &k) const;
 		bool operator >=(const key &k) const;
 		bool operator <=(const key &k) const;
+		key &operator =(const key &k);
 
 		const unsigned char *id() const;
 		const struct index *idx(void) const;
@@ -271,14 +272,14 @@ typedef unsigned int (* bloom_hash_t)(const char *data, int size);
 
 class bloom {
 	public:
-		bloom(int bloom_size = 128);
-		bloom(std::vector<char> &data);
+		bloom(const int bloom_size = 128);
+		bloom(const std::vector<char> &data);
 		virtual ~bloom();
 
 		void add(const char *data, int size);
 		bool check(const char *data, int size);
 
-		std::vector<char> &data();
+		const std::vector<char> &data() const;
 		std::string str(void);
 
 	private:

@@ -83,6 +83,12 @@ bool key::operator <=(const key &k) const
 	return cmp(k) <= 0;
 }
 
+key &key::operator =(const key &k)
+{
+	this->set(k.idx());
+	return *this;
+}
+
 const unsigned char *key::id(void) const
 {
 	return idx_.id;
