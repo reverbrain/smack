@@ -323,17 +323,15 @@ class blob_store {
 				return false;
 			}
 
-			log(SMACK_LOG_NOTICE, "%s: %s: chunk start: %s, end: %s: chunk-read: req-index-offset: %zd-%zd, "
-					"index-offset: %zd, data-offset: %zd, chunk-start-offset: %zd, data-size: %zd, num: %d\n",
-					m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str(), index_offset, next_index_offset,
-					l.index_offset[0], l.data_offset, ch.ctl()->data_offset, l.data_size, ch.ctl()->num);
-
 #if BOOST_VERSION < 104400
 			bio::file_descriptor_source src_data(dup(m_data.get()), file_desriptor_close_handle);
 #else
 			bio::file_descriptor_source src_data(m_data.get(), file_desriptor_close_handle);
 #endif
 
+			struct timeval start, seek_time, decompress_time;
+
+			gettimeofday(&start, NULL);
 			/* seeking to the start of the chunk */
 			size_t pos = bio::seek<bio::file_descriptor_source>(src_data, ch.ctl()->data_offset, std::ios_base::beg);
 			if (pos != ch.ctl()->data_offset) {
@@ -343,6 +341,8 @@ class blob_store {
 				throw std::out_of_range(str.str());
 			}
 
+			gettimeofday(&seek_time, NULL);
+
 			bio::filtering_streambuf<bio::input> in;
 			in.push(bio::zlib_decompressor());
 			in.push(src_data);
@@ -351,7 +351,22 @@ class blob_store {
 			std::ostringstream str;
 			bio::copy(in, str, l.data_size + l.data_offset);
 
+			gettimeofday(&decompress_time, NULL);
+
+#define __diff(s, e) ((e.tv_sec - s.tv_sec) * 1000000 + (e.tv_usec - s.tv_usec))
+
+			long seek_diff = __diff(seek_time, start);
+			long decompress_diff = __diff(decompress_time, seek_time);
+
 			ret = str.str().substr(l.data_offset, l.data_size);
+
+			log(SMACK_LOG_NOTICE, "%s: %s: chunk start: %s, end: %s: chunk-read: req-index-offset: %zd-%zd, "
+					"index-offset: %zd, data-offset: %zd, chunk-start-offset: %zd, data-size: %zd, num: %d, "
+					"seek-time: %ld, decompress-time: %ld usecs\n",
+					m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str(), index_offset, next_index_offset,
+					l.index_offset[0], l.data_offset, ch.ctl()->data_offset, l.data_size, ch.ctl()->num,
+					seek_diff, decompress_diff);
+
 			return true;
 		}
 
