@@ -33,6 +33,8 @@ namespace bio = boost::iostreams;
 #define file_desriptor_close_handle	bio::never_close_handle
 #endif
 
+#define smack_time_diff(s, e) ((e.tv_sec - s.tv_sec) * 1000000 + (e.tv_usec - s.tv_usec))
+#define smack_rcache_mult	10000
 
 struct chunk_ctl {
 	uint64_t		index_offset;		/* index offset in index file for given chunk */
@@ -273,8 +275,9 @@ class blob_store {
 			in.push(src_data);
 			in.set_auto_close(false);
 
-			log(SMACK_LOG_NOTICE, "%s: read-chunk: start: %s, end: %s, num: %d\n",
-					m_path_base.c_str(), ch.start().str(), ch.end().str(), ch.ctl()->num);
+			struct timeval start, end;
+			gettimeofday(&start, NULL);
+
 			struct index idx;
 			for (int i = 0; i < ch.ctl()->num; ++i) {
 				bio::read<bio::file_descriptor_source>(src_idx, (char *)&idx, sizeof(struct index));
@@ -285,6 +288,12 @@ class blob_store {
 				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)str.data(), str.size());
 				cache.insert(std::make_pair(key(&idx), str));
 			}
+			gettimeofday(&end, NULL);
+
+			long read_time = smack_time_diff(start, end);
+
+			log(SMACK_LOG_INFO, "%s: read-chunk: start: %s, end: %s, num: %d, read-time: %ld usecs\n",
+					m_path_base.c_str(), ch.start().str(), ch.end().str(), ch.ctl()->num, read_time);
 		}
 
 		void read_index(std::map<key, chunk, keycomp> &chunks, std::vector<chunk> &chunks_unsorted, size_t max_rcache_size) {
@@ -353,10 +362,8 @@ class blob_store {
 
 			gettimeofday(&decompress_time, NULL);
 
-#define __diff(s, e) ((e.tv_sec - s.tv_sec) * 1000000 + (e.tv_usec - s.tv_usec))
-
-			long seek_diff = __diff(seek_time, start);
-			long decompress_diff = __diff(decompress_time, seek_time);
+			long seek_diff = smack_time_diff(start, seek_time);
+			long decompress_diff = smack_time_diff(seek_time, decompress_time);
 
 			ret = str.str().substr(l.data_offset, l.data_size);
 
@@ -485,7 +492,7 @@ class blob {
 
 			if (idx != -1) {
 				m_chunk_idx = idx;
-				m_files[idx]->read_index(m_chunks, m_chunks_unsorted, m_cache_size);
+				m_files[idx]->read_index(m_chunks, m_chunks_unsorted, m_cache_size * sizeof(key) / smack_rcache_mult);
 				log(SMACK_LOG_INFO, "%s: reading-index: idx: %d, sorted: %zd, unsorted: %zd\n",
 						m_path.c_str(), idx, m_chunks.size(), m_chunks_unsorted.size());
 
@@ -688,7 +695,7 @@ class blob {
 				}
 			}
 
-			chunk ch = current_bstore()->store_chunk(cache, num, 0);
+			chunk ch = current_bstore()->store_chunk(cache, num, m_cache_size * sizeof(key) / smack_rcache_mult);
 			if (sorted) {
 				m_chunks.insert(std::make_pair(ch.start(), ch));
 			} else {
