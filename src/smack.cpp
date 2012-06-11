@@ -79,7 +79,7 @@ int smack_read(struct smack_ctl *ctl, struct index *idx, char **datap)
 
 		return 0;
 	} catch (const std::exception &e) {
-		log(SMACK_LOG_ERROR, "%s: could not read data: %s\n", k.str(), e.what());
+		log(SMACK_LOG_ERROR, "%s: could not read data: %s: %s\n", k.str(), e.what(), strerror(errno));
 		return -EINVAL;
 	}
 }
@@ -91,7 +91,7 @@ int smack_write(struct smack_ctl *ctl, struct index *idx, const char *data)
 		ctl->sm->write(k, data, idx->data_size);
 		return 0;
 	} catch (const std::exception &e) {
-		log(SMACK_LOG_ERROR, "%s: could not write data: %s\n", k.str(), e.what());
+		log(SMACK_LOG_ERROR, "%s: could not write data: %s: %s\n", k.str(), e.what(), strerror(errno));
 		return -EINVAL;
 	}
 }

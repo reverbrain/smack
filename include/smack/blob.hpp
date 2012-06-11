@@ -98,7 +98,6 @@ class chunk : public bloom {
 				return true;
 			}
 
-			log(SMACK_LOG_INFO, "%s: ch-start: %s, ch-end: %s\n", key.str(), m_start.str(), m_end.str());
 			rcache_t::iterator it = m_rcache.upper_bound(key);
 			if (it == m_rcache.begin()) {
 				if (key < m_start)
@@ -301,7 +300,7 @@ class blob_store {
 
 			long read_time = smack_time_diff(start, end);
 
-			log(SMACK_LOG_INFO, "%s: read-chunk: start: %s, end: %s, num: %d, read-time: %ld usecs\n",
+			log(SMACK_LOG_NOTICE, "%s: read-chunk: start: %s, end: %s, num: %d, read-time: %ld usecs\n",
 					m_path_base.c_str(), ch.start().str(), ch.end().str(), ch.ctl()->num, read_time);
 		}
 
@@ -309,11 +308,15 @@ class blob_store {
 			try {
 				read_chunks(chunks, chunks_unsorted, max_rcache_size);
 			} catch (const std::runtime_error &e) {
-				log(SMACK_LOG_INFO, "%s: read chunks failed: %s\n", m_path_base.c_str(), e.what());
+				log(SMACK_LOG_ERROR, "%s: read chunks failed: %s\n", m_path_base.c_str(), e.what());
+				throw;
 			}
 		}
 
 		bool chunk_read(key &key, chunk &ch, std::string &ret) {
+			struct timeval start, lookup_time, seek_time, decompress_time;
+
+			gettimeofday(&start, NULL);
 			if (!ch.check((char *)key.id(), SMACK_KEY_SIZE)) {
 				log(SMACK_LOG_DSA, "%s: %s: chunk start: %s, end: %s: bloom-check failed\n",
 						m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str());
@@ -342,15 +345,23 @@ class blob_store {
 				return false;
 			}
 
+			gettimeofday(&lookup_time, NULL);
+
+			long lookup_diff = smack_time_diff(start, lookup_time);
+
+			log(SMACK_LOG_NOTICE, "%s: %s: chunk start: %s, end: %s: chunk-read: req-index-offset: %zd-%zd, "
+					"index-offset: %zd, data-offset: %zd, chunk-start-offset: %zd, data-size: %zd, num: %d, "
+					"lookup-time: %ld usecs\n",
+					m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str(), index_offset, next_index_offset,
+					l.index_offset[0], l.data_offset, ch.ctl()->data_offset, l.data_size, ch.ctl()->num,
+					lookup_diff);
+
 #if BOOST_VERSION < 104400
 			bio::file_descriptor_source src_data(dup(m_data.get()), file_desriptor_close_handle);
 #else
 			bio::file_descriptor_source src_data(m_data.get(), file_desriptor_close_handle);
 #endif
 
-			struct timeval start, seek_time, decompress_time;
-
-			gettimeofday(&start, NULL);
 			/* seeking to the start of the chunk */
 			size_t pos = bio::seek<bio::file_descriptor_source>(src_data, ch.ctl()->data_offset, std::ios_base::beg);
 			if (pos != ch.ctl()->data_offset) {
@@ -360,9 +371,6 @@ class blob_store {
 				throw std::out_of_range(str.str());
 			}
 
-			ret.assign("qeqweqeq");
-			return true;
-
 			gettimeofday(&seek_time, NULL);
 
 			bio::filtering_streambuf<bio::input> in;
@@ -370,22 +378,24 @@ class blob_store {
 			in.push(src_data);
 			in.set_auto_close(false);
 
+#if 1
 			std::ostringstream str;
 			bio::copy(in, str, l.data_size + l.data_offset);
-
+			ret = str.str().substr(l.data_offset, l.data_size);
+#else
+			m_data.read((char *)ret.data(), (ch.ctl()->data_offset + l.data_offset) % m_data.size(), l.data_size);
+#endif
 			gettimeofday(&decompress_time, NULL);
 
-			long seek_diff = smack_time_diff(start, seek_time);
+			long seek_diff = smack_time_diff(lookup_time, seek_time);
 			long decompress_diff = smack_time_diff(seek_time, decompress_time);
-
-			ret = str.str().substr(l.data_offset, l.data_size);
 
 			log(SMACK_LOG_INFO, "%s: %s: chunk start: %s, end: %s: chunk-read: req-index-offset: %zd-%zd, "
 					"index-offset: %zd, data-offset: %zd, chunk-start-offset: %zd, data-size: %zd, num: %d, "
-					"seek-time: %ld, decompress-time: %ld usecs\n",
+					"lookup-time: %ld, seek-time: %ld, decompress-time: %ld usecs\n",
 					m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str(), index_offset, next_index_offset,
 					l.index_offset[0], l.data_offset, ch.ctl()->data_offset, l.data_size, ch.ctl()->num,
-					seek_diff, decompress_diff);
+					lookup_diff, seek_diff, decompress_diff);
 
 			return true;
 		}
@@ -450,7 +460,7 @@ class blob_store {
 				m_index.read((char *)&tmp, ctl.index_offset + (ctl.num - 1) * sizeof(struct index), sizeof(struct index));
 				ch.end().set(&tmp);
 
-				log(SMACK_LOG_INFO, "%s: read_chunks: %zd: index-offset: %zd, data-offset: %zd, "
+				log(SMACK_LOG_NOTICE, "%s: read_chunks: %zd: index-offset: %zd, data-offset: %zd, "
 						"compressed-size: %zd, num: %d, bloom-size: %d, start: %s, end: %s\n",
 						m_path_base.c_str(), chunks.size(), ctl.index_offset, ctl.data_offset, ctl.data_size,
 						ctl.num, ctl.bloom_size, ch.start().str(), ch.end().str());
@@ -507,7 +517,7 @@ class blob {
 			if (idx != -1) {
 				m_chunk_idx = idx;
 				m_files[idx]->read_index(m_chunks, m_chunks_unsorted, m_cache_size * sizeof(key) / smack_rcache_mult);
-				log(SMACK_LOG_INFO, "%s: reading-index: idx: %d, sorted: %zd, unsorted: %zd\n",
+				log(SMACK_LOG_INFO, "%s: read-index: idx: %d, sorted: %zd, unsorted: %zd\n",
 						m_path.c_str(), idx, m_chunks.size(), m_chunks_unsorted.size());
 
 				if (m_chunks_unsorted.size()) {
@@ -575,12 +585,18 @@ class blob {
 
 			if (m_chunks.size()) {
 				std::map<class key, chunk, keycomp>::iterator it = m_chunks.upper_bound(key);
-				--it;
-
-				found = current_bstore()->chunk_read(key, it->second, ret);
-				if (!found && (key > it->second.end())) {
-					++it;
+				if (it == m_chunks.begin()) {
 					found = current_bstore()->chunk_read(key, it->second, ret);
+				} else {
+					--it;
+
+					found = current_bstore()->chunk_read(key, it->second, ret);
+					if (!found && (key > it->second.end())) {
+						++it;
+
+						if (it != m_chunks.end())
+							found = current_bstore()->chunk_read(key, it->second, ret);
+					}
 				}
 
 				if (found)
