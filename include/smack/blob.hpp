@@ -16,6 +16,7 @@
 #include <boost/iostreams/filtering_streambuf.hpp>
 #include <boost/iostreams/filter/zlib.hpp>
 #include <boost/iostreams/copy.hpp>
+#include <boost/iostreams/stream.hpp>
 
 #include <smack/base.hpp>
 
@@ -38,9 +39,9 @@ namespace bio = boost::iostreams;
 #define smack_rcache_mult	10000
 
 struct chunk_ctl {
-	uint64_t		index_offset;		/* index offset in index file for given chunk */
 	uint64_t		data_offset;		/* data offset in data file for given chunk */
-	uint64_t		data_size;		/* size of (compressed) data on disk */
+	uint64_t		compressed_data_size;		/* size of (compressed) data on disk */
+	uint64_t		uncompressed_data_size;		/* size of (compressed) data on disk */
 	int			num;			/* number of records in the chunk */
 	int			bloom_size;		/* bloom size in bytes */
 } __attribute__ ((packed));
@@ -88,13 +89,12 @@ class chunk : public bloom {
 				p.first->second = offset;
 		}
 
-		bool rcache_find(const key &key, size_t &idx_start, size_t &idx_end) {
+		bool rcache_find(const key &key, size_t &data_offset) {
 			if (m_rcache.size() == 0) {
 				if (key > m_end)
 					return false;
 
-				idx_start = m_ctl.index_offset;
-				idx_end = m_ctl.index_offset + m_ctl.num * sizeof(struct index);
+				data_offset = m_ctl.uncompressed_data_size;
 				return true;
 			}
 
@@ -103,8 +103,7 @@ class chunk : public bloom {
 				if (key < m_start)
 					return false;
 
-				idx_start = m_ctl.index_offset;
-				idx_end = it->second;
+				data_offset = it->second;
 				return true;
 			}
 
@@ -112,14 +111,11 @@ class chunk : public bloom {
 				if (key > m_end)
 					return false;
 
-				idx_start = m_rcache.rbegin()->second;
-				idx_end = m_ctl.index_offset + m_ctl.num * sizeof(struct index);
+				data_offset = m_ctl.uncompressed_data_size;
 				return true;
 			}
 
-			idx_end = it->second;
-			--it;
-			idx_start = it->second;
+			data_offset = it->second;
 			return true;
 		}
 
@@ -134,18 +130,17 @@ class blob_store {
 		blob_store(const std::string &path, int bloom_size) :
 		m_path_base(path),
 		m_data(path + ".data"),
-		m_index(path + ".index"),
 		m_chunk(path + ".chunk"),
 		m_bloom_size(bloom_size)
 		{
 			log(SMACK_LOG_NOTICE, "blob-store: %s, bloom-size: %d\n", path.c_str(), bloom_size);
 		}
 
-		/* returns index offset of the new chunk written */
+		/* returns offset of the new chunk written */
 		chunk store_chunk(cache_t &cache, size_t num, size_t max_cache_size) {
 			chunk ch(m_bloom_size);
 
-			bio::file_descriptor_sink dst_idx(m_index.get(), file_desriptor_close_handle);
+			size_t data_offset = 0;
 #if BOOST_VERSION < 104400
 			bio::file_descriptor_sink dst_data(dup(m_data.get()), file_desriptor_close_handle);
 #else
@@ -153,20 +148,14 @@ class blob_store {
 #endif
 
 			try {
-				m_index.set_size(bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end));
 				m_data.set_size(bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end));
 			} catch (const std::exception &e) {
-				log(SMACK_LOG_ERROR, "%s: store-chunk: start: %s, end: %s, "
-						"index-fd: %d, data-fd: %d, num: %zd, cache-size: %zd: %s\n",
+				log(SMACK_LOG_ERROR, "%s: store-chunk: start: %s, end: %s, data-fd: %d, num: %zd, cache-size: %zd: %s\n",
 						m_path_base.c_str(), ch.start().str(), ch.end().str(),
-						m_index.get(), m_data.get(), num, cache.size(),	e.what());
+						m_data.get(), num, cache.size(), e.what());
 				throw;
 			}
 
-			size_t data_offset = 0;
-			size_t index_offset = m_index.size();
-
-			ch.ctl()->index_offset = index_offset;
 			ch.ctl()->data_offset = m_data.size();
 
 			ch.start().set(cache.begin()->first.idx());
@@ -187,26 +176,24 @@ class blob_store {
 
 				int st = 0;
 				for (it = cache.begin(); it != cache.end(); ++it) {
-					struct index idx = *it->first.idx();
-					idx.data_offset = data_offset;
-					idx.data_size = it->second.size();
+					struct index *idx = (struct index *)it->first.idx();
+					idx->data_size = it->second.size();
 
-					bio::write<bio::file_descriptor_sink>(dst_idx, (char *)&idx, sizeof(struct index));
+					bio::write<bio::filtering_streambuf<bio::output> >(out, (char *)idx, sizeof(struct index));
 					bio::write<bio::filtering_streambuf<bio::output> >(out, it->second.data(), it->second.size());
 
-					ch.add((char *)idx.id, SMACK_KEY_SIZE);
+					ch.add((char *)idx->id, SMACK_KEY_SIZE);
 
 					if (++st == step) {
-						key k(&idx);
-						ch.rcache_add(k, index_offset);
+						key k(idx);
+						ch.rcache_add(k, data_offset);
 						st = 0;
 					}
 
-					index_offset += sizeof(struct index);
-					data_offset += it->second.size();
+					data_offset += it->second.size() + sizeof(struct index);
 
 					if (++count == num) {
-						ch.end().set(it->first.idx());
+						ch.end().set(idx);
 						++it;
 						break;
 					}
@@ -225,52 +212,41 @@ class blob_store {
 			bio::file_descriptor_sink dst_data_tmp(m_data.get(), file_desriptor_close_handle);
 			size_t data_size = bio::seek<bio::file_descriptor_sink>(dst_data_tmp, 0, std::ios_base::end);
 
-			/*
-			 * streambuf out must be destroyed, since it looks like it writes data
-			 * to 'sink' somewhere around its destructor.
-			 * strict_sync() _does_not_ ensures that
-			 */
-			ch.ctl()->data_size = data_size - ch.ctl()->data_offset;
+			ch.ctl()->compressed_data_size = data_size - ch.ctl()->data_offset;
+			ch.ctl()->uncompressed_data_size = data_offset;
 
 			store_chunk_meta(ch);
 
-			log(SMACK_LOG_NOTICE, "%s: store-chunk: start: %s, end: %s, index-fd: %d, index-offset: %zd, num: %d, "
-					"data-fd: %d, data-offset: %zd, uncompressed-data-size: %zd, compressed-data-size: %zd\n",
-					m_path_base.c_str(), ch.start().str(), ch.end().str(), m_index.get(), ch.ctl()->index_offset,
-					ch.ctl()->num, m_data.get(), ch.ctl()->data_offset, data_offset, ch.ctl()->data_size);
+			log(SMACK_LOG_NOTICE, "%s: store-chunk: start: %s, end: %s, num: %d, data-fd: %d, data-start: %zd, "
+					"uncompressed-data-size: %zd, compressed-data-size: %zd\n",
+					m_path_base.c_str(), ch.start().str(), ch.end().str(),
+					ch.ctl()->num, m_data.get(), ch.ctl()->data_offset,
+					ch.ctl()->uncompressed_data_size, ch.ctl()->compressed_data_size);
 
 			return ch;
 		}
 
-		void write_raw(chunk &ch, int src_index_fd, int src_data_fd) {
-			bio::file_descriptor_source src_idx(src_index_fd, file_desriptor_close_handle);
+		void write_raw(chunk &ch, int src_data_fd) {
 			bio::file_descriptor_source src_data(src_data_fd, file_desriptor_close_handle);
-
-			bio::file_descriptor_sink dst_idx(m_index.get(), file_desriptor_close_handle);
 			bio::file_descriptor_sink dst_data(m_data.get(), file_desriptor_close_handle);
 
 			size_t data_offset = bio::seek<bio::file_descriptor_sink>(dst_data, 0, std::ios_base::end);
-			size_t index_offset = bio::seek<bio::file_descriptor_sink>(dst_idx, 0, std::ios_base::end);
 
-			bio::copy<bio::file_descriptor_source, bio::file_descriptor_sink>(src_data, dst_data, ch.ctl()->data_size);
-			bio::copy<bio::file_descriptor_source, bio::file_descriptor_sink>(src_idx, dst_idx, ch.ctl()->num * sizeof(struct index));
+			size_t copied = bio::copy<bio::file_descriptor_source, bio::file_descriptor_sink>(src_data, dst_data);
 
 			store_chunk_meta(ch);
 
-			log(SMACK_LOG_NOTICE, "%s: write-raw: start: %s, end: %s, data-offset: %zd, data-size: %zd, "
-					"index-offset: %zd, index-size: %zd, num: %d\n",
-					m_path_base.c_str(), ch.start().str(), ch.end().str(),
-					data_offset, ch.ctl()->data_size, index_offset, ch.ctl()->num * sizeof(struct index), ch.ctl()->num);
+			log(SMACK_LOG_NOTICE, "%s: write-raw: start: %s, end: %s, data-offset: %zd, num: %d, "
+					"uncompressed-data-size: %zd, compressed-data-size: %zd, copied: %zd\n",
+					m_path_base.c_str(), ch.start().str(), ch.end().str(), data_offset, ch.ctl()->num,
+					ch.ctl()->uncompressed_data_size, ch.ctl()->compressed_data_size, copied);
 		}
 
 		void copy_chunk(chunk &ch, blob_store &dst) {
-			dst.write_raw(ch, m_index.get(), m_data.get());
+			dst.write_raw(ch, m_data.get());
 		}
 
 		void read_chunk(chunk &ch, cache_t &cache) {
-			bio::file_descriptor_source src_idx(m_index.get(), file_desriptor_close_handle);
-			bio::seek<bio::file_descriptor_source>(src_idx, ch.ctl()->index_offset, std::ios_base::beg);
-
 #if BOOST_VERSION < 104400
 			bio::file_descriptor_source src_data(dup(m_data.get()), file_desriptor_close_handle);
 #else
@@ -286,15 +262,22 @@ class blob_store {
 			struct timeval start, end;
 			gettimeofday(&start, NULL);
 
+			log(SMACK_LOG_NOTICE, "%s: read-chunk: num: %d, compressed-size: %zd, uncompressed-size: %zd\n",
+					m_path_base.c_str(), ch.ctl()->num, ch.ctl()->compressed_data_size, ch.ctl()->uncompressed_data_size);
+
 			struct index idx;
+
+			size_t offset = 0;
 			for (int i = 0; i < ch.ctl()->num; ++i) {
-				bio::read<bio::file_descriptor_source>(src_idx, (char *)&idx, sizeof(struct index));
+				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)&idx, sizeof(struct index));
 
-				std::string str;
-				str.resize(idx.data_size);
+				std::string tmp;
+				tmp.resize(idx.data_size);
+				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)tmp.data(), idx.data_size);
 
-				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)str.data(), str.size());
-				cache.insert(std::make_pair(key(&idx), str));
+				cache.insert(std::make_pair(key(&idx), tmp));
+
+				offset += sizeof(struct index) + idx.data_size;
 			}
 			gettimeofday(&end, NULL);
 
@@ -313,48 +296,29 @@ class blob_store {
 			}
 		}
 
-		bool chunk_read(key &key, chunk &ch, std::string &ret) {
-			struct timeval start, lookup_time, seek_time, decompress_time;
+		bool chunk_read(key &read_key, chunk &ch, std::string &ret) {
+			struct timeval start, seek_time, decompress_time;
 
 			gettimeofday(&start, NULL);
-			if (!ch.check((char *)key.id(), SMACK_KEY_SIZE)) {
+
+			if (!ch.check((char *)read_key.id(), SMACK_KEY_SIZE)) {
 				log(SMACK_LOG_DSA, "%s: %s: chunk start: %s, end: %s: bloom-check failed\n",
-						m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str());
+						m_path_base.c_str(), read_key.str(), ch.start().str(), ch.end().str());
 				return false;
 			}
 
-			size_t index_offset, next_index_offset;
-			bool found = ch.rcache_find(key, index_offset, next_index_offset);
+			size_t data_offset;
+			bool found = ch.rcache_find(read_key, data_offset);
 			if (!found) {
 				log(SMACK_LOG_DSA, "%s: %s: chunk start: %s, end: %s: rcache lookup failed\n",
-						m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str());
+						m_path_base.c_str(), read_key.str(), ch.start().str(), ch.end().str());
 				return false;
 			}
 
-			struct index_lookup l;
-			memset(&l, 0, sizeof(struct index_lookup));
-
-			l.index_offset[0] = index_offset;
-			l.index_offset[1] = next_index_offset;
-
-			found = m_index.lookup(key, l);
-			if (!found || !l.exact) {
-				log(SMACK_LOG_DSA, "%s: %s: chunk start: %s, end: %s: bsearch lookup failed in: %zd-%zd\n",
-						m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str(),
-						index_offset, next_index_offset);
-				return false;
-			}
-
-			gettimeofday(&lookup_time, NULL);
-
-			long lookup_diff = smack_time_diff(start, lookup_time);
-
-			log(SMACK_LOG_NOTICE, "%s: %s: chunk start: %s, end: %s: chunk-read: req-index-offset: %zd-%zd, "
-					"index-offset: %zd, data-offset: %zd, chunk-start-offset: %zd, data-size: %zd, num: %d, "
-					"lookup-time: %ld usecs\n",
-					m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str(), index_offset, next_index_offset,
-					l.index_offset[0], l.data_offset, ch.ctl()->data_offset, l.data_size, ch.ctl()->num,
-					lookup_diff);
+			log(SMACK_LOG_NOTICE, "%s: %s: start: %s, end: %s, rcache returned offset: %zd, "
+					"compressed-size: %zd, uncompressed-size: %zd\n",
+					m_path_base.c_str(), read_key.str(), ch.start().str(), ch.end().str(), data_offset,
+					ch.ctl()->compressed_data_size, ch.ctl()->uncompressed_data_size);
 
 #if BOOST_VERSION < 104400
 			bio::file_descriptor_source src_data(dup(m_data.get()), file_desriptor_close_handle);
@@ -366,8 +330,8 @@ class blob_store {
 			size_t pos = bio::seek<bio::file_descriptor_source>(src_data, ch.ctl()->data_offset, std::ios_base::beg);
 			if (pos != ch.ctl()->data_offset) {
 				std::ostringstream str;
-				str << m_path_base << ": " << key.str() << ": read: could not seek to: " <<
-					l.data_offset << ", seeked to: " << pos;
+				str << m_path_base << ": " << read_key.str() << ": read: could not seek to: " <<
+					ch.ctl()->data_offset << ", seeked to: " << pos;
 				throw std::out_of_range(str.str());
 			}
 
@@ -378,47 +342,59 @@ class blob_store {
 			in.push(src_data);
 			in.set_auto_close(false);
 
-#if 1
-			std::ostringstream str;
-			bio::copy(in, str, l.data_size + l.data_offset);
-			ret = str.str().substr(l.data_offset, l.data_size);
-#else
-			m_data.read((char *)ret.data(), (ch.ctl()->data_offset + l.data_offset) % m_data.size(), l.data_size);
-#endif
+			struct index idx;
+
+			ret.clear();
+
+			size_t offset = 0;
+			while (offset <= data_offset) {
+				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)&idx, sizeof(struct index));
+
+				std::string tmp;
+				tmp.resize(idx.data_size);
+				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)tmp.data(), idx.data_size);
+
+				key tmp_key(&idx);
+				if (read_key < tmp_key)
+					return false;
+
+				if (read_key == tmp_key) {
+					ret.swap(tmp);
+					break;
+				}
+
+				offset += sizeof(struct index) + idx.data_size;
+			}
+
 			gettimeofday(&decompress_time, NULL);
 
-			long seek_diff = smack_time_diff(lookup_time, seek_time);
+			long seek_diff = smack_time_diff(start, seek_time);
 			long decompress_diff = smack_time_diff(seek_time, decompress_time);
 
-			log(SMACK_LOG_INFO, "%s: %s: chunk start: %s, end: %s: chunk-read: req-index-offset: %zd-%zd, "
-					"index-offset: %zd, data-offset: %zd, chunk-start-offset: %zd, data-size: %zd, num: %d, "
-					"lookup-time: %ld, seek-time: %ld, decompress-time: %ld usecs\n",
-					m_path_base.c_str(), key.str(), ch.start().str(), ch.end().str(), index_offset, next_index_offset,
-					l.index_offset[0], l.data_offset, ch.ctl()->data_offset, l.data_size, ch.ctl()->num,
-					lookup_diff, seek_diff, decompress_diff);
+			log(SMACK_LOG_NOTICE, "%s: %s: chunk start: %s, end: %s: chunk-read: data-offset: %zd, chunk-start-offset: %zd, "
+					"num: %d, seek-time: %ld, decompress-time: %ld usecs, return-size: %zd\n",
+					m_path_base.c_str(), read_key.str(), ch.start().str(), ch.end().str(),
+					data_offset, ch.ctl()->data_offset, ch.ctl()->num,
+					seek_diff, decompress_diff, ret.size());
 
-			return true;
+			return ret.size() > 0;
 		}
 
 		void truncate() {
 			m_data.truncate(0);
-			m_index.truncate(0);
 			m_chunk.truncate(0);
 		}
 
-		/* returns current number of records and data size on disk */
-		void size(size_t &num, size_t &data_size) {
-			bio::file_descriptor_sink idx(m_index.get(), file_desriptor_close_handle);
+		/* returns data size on disk */
+		void size(size_t &data_size) {
 			bio::file_descriptor_sink data(m_data.get(), file_desriptor_close_handle);
 
-			num = bio::seek<bio::file_descriptor_sink>(idx, 0, std::ios_base::end) / sizeof(struct index);
 			data_size = bio::seek<bio::file_descriptor_sink>(data, 0, std::ios_base::end);
 		}
 
 	private:
 		std::string m_path_base;
 		mmap m_data;
-		file_index m_index;
 		mmap m_chunk;
 		int m_bloom_size;
 
@@ -439,30 +415,60 @@ class blob_store {
 
 				chunk ch(ctl, data);
 
-				struct index tmp;
-
 				int step = ctl.num;
 				if (max_rcache_size)
 					step = ctl.num / max_rcache_size + 1;
 
-				m_index.read((char *)&tmp, ctl.index_offset, sizeof(struct index));
-				ch.start().set(&tmp);
+#if BOOST_VERSION < 104400
+				bio::file_descriptor_source src_data(dup(m_data.get()), file_desriptor_close_handle);
+#else
+				bio::file_descriptor_source src_data(m_data.get(), file_desriptor_close_handle);
+#endif
 
-				for (size_t off = ctl.index_offset + step * sizeof(struct index);
-						off < ctl.index_offset + ctl.num * sizeof(struct index);
-						off += step * sizeof(struct index)) {
-
-					m_index.read((char *)&tmp, off, sizeof(struct index));
-					key k(&tmp);
-					ch.rcache_add(k, off);
+				/* seeking to the start of the chunk */
+				size_t pos = bio::seek<bio::file_descriptor_source>(src_data, ctl.data_offset, std::ios_base::beg);
+				if (pos != ch.ctl()->data_offset) {
+					std::ostringstream str;
+					str << m_path_base << ": read_chunks: could not seek to: " <<
+						ctl.data_offset << ", seeked to: " << pos;
+					throw std::out_of_range(str.str());
 				}
 
-				m_index.read((char *)&tmp, ctl.index_offset + (ctl.num - 1) * sizeof(struct index), sizeof(struct index));
-				ch.end().set(&tmp);
+				bio::filtering_streambuf<bio::input> in;
+				in.push(bio::zlib_decompressor());
+				in.push(src_data);
+				in.set_auto_close(false);
 
-				log(SMACK_LOG_NOTICE, "%s: read_chunks: %zd: index-offset: %zd, data-offset: %zd, "
-						"compressed-size: %zd, num: %d, bloom-size: %d, start: %s, end: %s\n",
-						m_path_base.c_str(), chunks.size(), ctl.index_offset, ctl.data_offset, ctl.data_size,
+				struct index idx;
+
+				int st = 0;
+				size_t off = 0;
+				for (int i = 0; i < ch.ctl()->num; ++i) {
+					bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)&idx, sizeof(struct index));
+
+					std::string tmp;
+					tmp.resize(idx.data_size);
+					bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)tmp.data(), idx.data_size);
+
+					if (i == 0)
+						ch.start().set(&idx);
+
+					if (i == ch.ctl()->num - 1)
+						ch.end().set(&idx);
+
+					if (++st == step) {
+						ch.rcache_add(key(&idx), off);
+						st = 0;
+					}
+
+					off += sizeof(struct index) + idx.data_size;
+				}
+
+				log(SMACK_LOG_NOTICE, "%s: read_chunks: %zd: data-offset: %zd, "
+						"compressed-size: %zd, uncompressed-size: %zd, "
+						"num: %d, bloom-size: %d, start: %s, end: %s\n",
+						m_path_base.c_str(), chunks.size(), ctl.data_offset,
+						ctl.compressed_data_size, ctl.uncompressed_data_size,
 						ctl.num, ctl.bloom_size, ch.start().str(), ch.end().str());
 
 				if ((chunks.size() == 0) || (ch.start() >= chunks.rbegin()->second.end()))
@@ -565,7 +571,6 @@ class blob {
 			cache_t::iterator it = m_wcache.find(key);
 			if (it != m_wcache.end()) {
 				struct index *idx = (struct index *)key.idx();
-				idx->data_offset = 0;
 				idx->data_size = it->second.size();
 				return it->second;
 			}
@@ -672,16 +677,14 @@ class blob {
 		}
 
 		/* returns current number of records and data size on disk */
-		void size(size_t &num, size_t &data_size, bool &have_split) {
+		void size(size_t &data_size, bool &have_split) {
 			boost::mutex::scoped_lock disk_guard(m_disk_lock);
 
 			have_split = false;
 			if (m_split_dst)
 				have_split = true;
 
-			current_bstore()->size(num, data_size);
-			log(SMACK_LOG_NOTICE, "%s: size-check: num: %zd, data-size: %zd, have-split: %d\n",
-					m_start.str(), num, data_size, have_split);
+			current_bstore()->size(data_size);
 		}
 
 		void set_split_dst(boost::shared_ptr<blob<filter_t> > dst) {
@@ -780,11 +783,11 @@ class blob {
 
 			write_cache_to_chunks(cache, true);
 
-			size_t idx_num, data_size;
-			current_bstore()->size(idx_num, data_size);
-			log(SMACK_LOG_NOTICE, "%s: %s: chunks resorted: idx: %d, chunks: %zd, num: %zd, data-size: %zd, split: %s\n",
+			size_t data_size;
+			current_bstore()->size(data_size);
+			log(SMACK_LOG_NOTICE, "%s: %s: chunks resorted: idx: %d, chunks: %zd, data-size: %zd, split: %s\n",
 					m_path.c_str(), m_start.str(), m_chunk_idx, m_chunks.size(),
-					idx_num, data_size, m_split_dst ? m_split_dst->start().str() : "none");
+					data_size, m_split_dst ? m_split_dst->start().str() : "none");
 		}
 
 		void split(const key &key, cache_t &cache) {

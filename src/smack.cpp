@@ -73,7 +73,6 @@ int smack_read(struct smack_ctl *ctl, struct index *idx, char **datap)
 			return -ENOMEM;
 
 		memcpy(data, ret.data(), ret.size());
-		idx->data_offset = k.idx()->data_offset;
 		idx->data_size = ret.size();
 		*datap = data;
 
@@ -122,7 +121,6 @@ int smack_lookup(struct smack_ctl *ctl, struct index *idx, char **pathp)
 			return -ENOMEM;
 
 		idx->data_size = k.idx()->data_size;
-		idx->data_offset = k.idx()->data_offset;
 
 		sprintf(p, "%s", (char *)path.data());
 		*pathp = p;

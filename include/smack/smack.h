@@ -15,9 +15,8 @@ extern "C" {
 struct index {
 	unsigned char		id[SMACK_KEY_SIZE];
 	uint64_t		ts;
-	uint64_t		flags;
-	uint64_t		data_offset; /* offset within chunk */
-	uint64_t		data_size;
+	uint32_t		flags;
+	uint32_t		data_size;
 };
 
 enum smack_storage_type {

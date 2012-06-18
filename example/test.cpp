@@ -99,6 +99,10 @@ int main(int argc, char *argv[])
 
 				log(SMACK_LOG_ERROR, "%s: invalid read: key: %s, data-size: %zd, read: '%s', want: '%s'\n",
 						key.str(), str.str().c_str(), d.size(), d.c_str(), want.c_str());
+				{
+					ioremap::smack::key k(std::string("qweqeqwe-51"));
+					s.read(k);
+				}
 				err << key.str() << ": invalid read: key: " << str.str();
 				throw std::runtime_error(err.str());
 			}

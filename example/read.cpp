@@ -54,23 +54,27 @@ class chunk_reader {
 			m_st.read_chunk(ch, cache);
 			bool found = false;
 
+			size_t offset = 0;
 			for (cache_t::iterator it = cache.begin(); it != cache.end(); ++it) {
 				const struct index *idx = it->first.idx();
 
 				if (!klen || !memcmp(key.idx()->id, idx->id, klen)) {
 					if (!found) {
-						log(SMACK_LOG_INFO, "chunk: %s: start: %s, end: %s, index-offset: %zd, num: %d, "
-								"data-offset: %zd, data-size: %zd\n",
+						log(SMACK_LOG_INFO, "chunk: %s: start: %s, end: %s, num: %d, data-start: %zd, "
+								"compressed-data-size: %zd, uncompressed-data-size: %zd\n",
 								m_path.c_str(),
-								ch.start().str(), ch.end().str(), ch.ctl()->index_offset, ch.ctl()->num,
-								ch.ctl()->data_offset, ch.ctl()->data_size);
+								ch.start().str(), ch.end().str(), ch.ctl()->num, ch.ctl()->data_offset,
+								ch.ctl()->compressed_data_size, ch.ctl()->uncompressed_data_size);
 						found = true;
 					}
 
-					log(SMACK_LOG_INFO, "%s: ts: %zd, data-uncompressed-offset: %zd, data-size: %zd, data: %s\n",
-						it->first.str(), idx->ts, idx->data_offset, idx->data_size,
+					log(SMACK_LOG_INFO, "%s: ts: %zd, data-offset: %zd/%zd, data-size: %d, data: %s\n",
+						it->first.str(), idx->ts,
+						offset, offset + ch.ctl()->data_offset,	idx->data_size,
 						m_show_data ? it->second.c_str() : "none");
 				}
+
+				offset += idx->data_size + sizeof(struct index);
 			}
 		}
 };

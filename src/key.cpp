@@ -16,7 +16,6 @@ key::key(const key &k)
 
 key::key(const std::string &name)
 {
-	idx_.data_offset = 0;
 	idx_.data_size = 0;
 
 	sha512_buffer((const char *)name.data(), name.size(), (void *)idx_.id);
@@ -24,7 +23,6 @@ key::key(const std::string &name)
 
 key::key(const unsigned char *id, int size)
 {
-	idx_.data_offset = 0;
 	idx_.data_size = 0;
 
 	if (size > SMACK_KEY_SIZE)
@@ -101,6 +99,17 @@ const struct index *key::idx(void) const
 
 int key::cmp(const key &k) const
 {
+	const unsigned char *l = idx_.id;
+	const unsigned char *r = k.id();
+
+	for (int i = 0; i < SMACK_KEY_SIZE; ++i) {
+		if (l[i] < r[i])
+			return -1;
+		if (l[i] > r[i])
+			return 1;
+	}
+
+	return 0;
 	return (const int)memcmp(idx_.id, k.id(), SMACK_KEY_SIZE);
 }
 

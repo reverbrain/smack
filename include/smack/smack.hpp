@@ -155,13 +155,13 @@ class smack {
 #if 1
 				boost::mutex::scoped_lock guard(m_blobs_lock);
 
-				size_t num, data_size;
+				size_t data_size;
 				bool have_split;
 
-				curb->size(num, data_size, have_split);
+				curb->size(data_size, have_split);
 
 				if ((blobs_.size() < max_blob_num_) &&
-						(num > 50 * max_cache_size_) &&
+						(data_size > 10 * 1024 * 1024) &&
 						!have_split) {
 					blob_num_++;
 					boost::shared_ptr<blob<filter_t> > b(new blob<filter_t>(
