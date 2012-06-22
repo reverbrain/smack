@@ -9,7 +9,7 @@ find_package(SNAPPY REQUIRED)
 find_package(Boost REQUIRED filesystem system thread iostreams)
 set(CMAKE_CXX_FLAGS "-g -W -Wall")
 
-include_directories("${PROJECT_BINARY_DIR}" "${PROJECT_SOURCE_DIR}/include" ${SNAPPY_INCLUDE_DIR})
+include_directories("${PROJECT_BINARY_DIR}" "${PROJECT_SOURCE_DIR}/include" ${SNAPPY_INCLUDE_DIR} ${Boost_INCLUDE_DIRS})
 FILE(GLOB headers "${CMAKE_CURRENT_SOURCE_DIR}/include/smack/*.hpp" "${CMAKE_CURRENT_SOURCE_DIR}/include/smack/*.h")
 install(FILES ${headers} DESTINATION include/smack)
 
