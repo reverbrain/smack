@@ -4,7 +4,6 @@
 #include <smack/smack.h>
 
 using namespace ioremap::smack;
-namespace bio = boost::iostreams;
 
 struct smack_ctl {
 	smack_zlib		*sm;
