@@ -384,6 +384,11 @@ class blob_store {
 			return ret.size() > 0;
 		}
 
+		void forget() {
+			posix_fadvise(m_data.get(), 0, m_data.size(), POSIX_FADV_DONTNEED);
+			posix_fadvise(m_chunk.get(), 0, m_chunk.size(), POSIX_FADV_DONTNEED);
+		}
+
 		void truncate() {
 			m_data.truncate(0);
 			m_chunk.truncate(0);
@@ -496,6 +501,7 @@ template <class fout_t, class fin_t>
 class blob {
 	public:
 		blob(const std::string &path, int bloom_size, size_t max_cache_size) :
+		want_resort(false),
 		m_path(path),
 		m_cache_size(max_cache_size),
 		m_bloom_size(bloom_size),
@@ -538,13 +544,6 @@ class blob {
 				m_files[idx]->read_index<fin_t>(in, m_chunks, m_chunks_unsorted, m_cache_size * sizeof(key) / smack_rcache_mult);
 				log(SMACK_LOG_INFO, "%s: read-index: idx: %d, sorted: %zd, unsorted: %zd\n",
 						m_path.c_str(), idx, m_chunks.size(), m_chunks_unsorted.size());
-
-				if (m_chunks_unsorted.size()) {
-					cache_t cache;
-					chunks_resort(cache);
-				}
-
-				truncate_others();
 			}
 
 			if (m_chunks.size()) {
@@ -672,7 +671,8 @@ class blob {
 
 			boost::mutex::scoped_lock disk_guard(m_disk_lock);
 
-			if ((m_chunks_unsorted.size() > 50) || m_split_dst) {
+			if ((m_chunks_unsorted.size() > 50) || m_split_dst || want_resort) {
+				want_resort = false;
 				chunks_resort(tmp);
 
 				if (m_split_dst) {
@@ -716,6 +716,11 @@ class blob {
 			m_split_dst->start().set(m_last_average_key.idx());
 		}
 
+		size_t have_unsorted_chunks() {
+			return m_chunks_unsorted.size();
+		}
+
+		bool want_resort;
 	private:
 		key m_start;
 		boost::mutex m_write_lock;
@@ -734,14 +739,6 @@ class blob {
 		std::vector<chunk> m_chunks_unsorted;
 
 		key m_last_average_key;
-
-		void truncate_others() {
-			for (int i = 0; i < (int)m_files.size(); ++i) {
-				if (i != m_chunk_idx) {
-					m_files[i]->truncate();
-				}
-			}
-		}
 
 		boost::shared_ptr<blob_store> current_bstore(void) {
 			return m_files[m_chunk_idx];
@@ -782,15 +779,14 @@ class blob {
 			}
 			m_chunks_unsorted.erase(m_chunks_unsorted.begin(), m_chunks_unsorted.end());
 
-			/* always resort all chunks */
-			if (m_split_dst || true) {
-				for (std::map<key, chunk, keycomp>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
-					fin_t in;
-					current_bstore()->read_chunk(in, it->second, cache);
-				}
-
-				m_chunks.erase(m_chunks.begin(), m_chunks.end());
+			/* always resort all chunks and try to drop old copy from page cache */
+			for (std::map<key, chunk, keycomp>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it) {
+				fin_t in;
+				current_bstore()->read_chunk(in, it->second, cache);
 			}
+
+			m_chunks.erase(m_chunks.begin(), m_chunks.end());
+			current_bstore()->forget();
 
 			boost::shared_ptr<blob_store> src = current_bstore();
 

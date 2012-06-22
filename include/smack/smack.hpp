@@ -138,6 +138,12 @@ class smack {
 
 					if (num > blob_num_)
 						blob_num_ = num;
+
+					if (b->have_unsorted_chunks() > 0) {
+						b->want_resort = true;
+						proc_.notify(b);
+					}
+
 				}
 			}
 
