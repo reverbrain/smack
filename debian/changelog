@@ -1,0 +1,5 @@
+smack (0.1.0) unstable; urgency=low
+
+  * SMACK - low-level IO storage which packs data into sorted (zlib/bzip2/snappy compressed) blobs
+
+ -- Evgeniy Polyakov <zbr@ioremap.net>  Fri, 22 Jun 2012 18:35:13 +0400

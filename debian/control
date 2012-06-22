@@ -1,0 +1,19 @@
+Source: smack
+Section: net
+Priority: optional
+Maintainer: Evgeniy Polyakov <zbr@ioremap.net>
+Build-Depends: debhelper (>= 7), cmake, libboost-dev, libboost-thread-dev, libboost-iostreams-dev, libsnappy1, autoconf (>= 2.52), libtool, automake
+Standards-Version: 3.8.0
+Homepage: http://www.ioremap.net/projects/eblob
+
+Package: smack
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: SMACK data container
+  SMACK - low-level IO storage which packs data into sorted (zlib/bzip2/snappy compressed) blobs
+
+Package: smack-dbg
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: SMACK data container
+  SMACK - low-level IO storage which packs data into sorted (zlib/bzip2/snappy compressed) blobs
