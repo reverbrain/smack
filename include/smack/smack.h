@@ -21,6 +21,8 @@ struct index {
 
 enum smack_storage_type {
 	SMACK_STORAGE_ZLIB = 0,
+	SMACK_STORAGE_BZIP2,
+	SMACK_STORAGE_SNAPPY,
 	__SMACK_STORAGE_MAX
 };
 
