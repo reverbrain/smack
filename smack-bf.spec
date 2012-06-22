@@ -36,7 +36,12 @@ needed for developing software which uses the eblob library.
 
 %build
 export LDFLAGS="-Wl,-z,defs"
+%if %{defined rhel} && 0%{?rhel} < 6
+cmake -DCMAKE_INSTALL_PREFIX:PATH=%{buildroot}%{_prefix} -DCMAKE_INSTALL_LIBDIR:PATH=%{buildroot}%{_libdir} -DBOOST_INCLUDEDIR=/usr/include/boost141 -DBOOST_LIBRARYDIR=/usr/lib64/boost141 .
+%else
 cmake -DCMAKE_INSTALL_PREFIX:PATH=%{buildroot}%{_prefix} -DCMAKE_INSTALL_LIBDIR:PATH=%{buildroot}%{_libdir} .
+%endif
+
 make %{?_smp_mflags}
 
 %install
