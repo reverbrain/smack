@@ -1,0 +1,3 @@
+SMACK - low-level IO storage which packs data into sorted (zlib/bzip2/snappy compressed) blobs
+
+Origianlly created as backend for elliptics: http://www.ioremap.net/projects/elliptics
