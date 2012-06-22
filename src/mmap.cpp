@@ -2,8 +2,7 @@
 
 #include <smack/base.hpp>
 
-using namespace ioremap::smack;
-
+namespace ioremap { namespace smack {
 mmap::mmap(const std::string &path) : file(path), data_(NULL), mapped_size(0)
 {
 	do_mmap();
@@ -63,3 +62,5 @@ void mmap::remap()
 		}
 	}
 }
+
+}}
