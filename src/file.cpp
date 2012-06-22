@@ -44,6 +44,7 @@ file::~file()
 void file::write(const char *data, size_t offset, size_t size)
 {
 	ssize_t err;
+	size_t orig_size = size;
 
 	while (size > 0) {
 		err = pwrite(fd, data, size, offset);
@@ -66,7 +67,7 @@ void file::write(const char *data, size_t offset, size_t size)
 	if (offset > size_)
 		size_ = offset;
 
-	log(SMACK_LOG_DSA, "write: offset: %zu, size: %zu, file-size: %zu\n", offset, size, size_);
+	log(SMACK_LOG_DSA, "write: offset: %zu, orig-size: %zu, file-size: %zu\n", offset, orig_size, size_);
 }
 
 void file::read(char *data, size_t offset, size_t size)

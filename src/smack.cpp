@@ -1,13 +1,13 @@
+#include <boost/iostreams/filter/zlib.hpp>
+
 #include <smack/smack.hpp>
 #include <smack/smack.h>
 
 using namespace ioremap::smack;
-
-class tmp_filter {
-};
+namespace bio = boost::iostreams;
 
 struct smack_ctl {
-	smack<tmp_filter>		*sm;
+	smack_zlib		*sm;
 };
 
 struct smack_ctl *smack_init(struct smack_init_ctl *ictl, int *errp)
@@ -28,7 +28,8 @@ struct smack_ctl *smack_init(struct smack_init_ctl *ictl, int *errp)
 	try {
 		switch (ictl->type) {
 			case SMACK_STORAGE_ZLIB:
-				ctl->sm = new smack<tmp_filter>(ictl->path, ictl->bloom_size, ictl->max_cache_size,
+				ctl->sm = new smack_zlib(ictl->path,
+						ictl->bloom_size, ictl->max_cache_size,
 						ictl->max_blob_num, ictl->cache_thread_num);
 				break;
 			default:

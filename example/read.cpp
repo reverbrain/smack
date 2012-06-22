@@ -3,16 +3,21 @@
 #include <fstream>
 #include <iostream>
 
+#include <boost/iostreams/filter/zlib.hpp>
+#include <boost/iostreams/filter/bzip2.hpp>
+
 #include <smack/blob.hpp>
+#include <smack/snappy.hpp>
 
 using namespace ioremap::smack;
-namespace bio = boost::iostreams;
 
+template <class fin_t>
 class chunk_reader {
 	public:
 		chunk_reader(const std::string &path, bool show_data, const key &key, const int klen) :
 		m_path(path), m_st(path, 128), m_show_data(show_data) {
-			m_st.read_index(m_chunks, m_chunks_unsorted, 0);
+			fin_t in;
+			m_st.read_index(in, m_chunks, m_chunks_unsorted, 0);
 
 			find(key, klen);
 		}
@@ -51,7 +56,8 @@ class chunk_reader {
 
 		void find_in_chunk(chunk &ch, const key &key, const int klen) {
 			cache_t cache;
-			m_st.read_chunk(ch, cache);
+			fin_t in;
+			m_st.read_chunk(in, ch, cache);
 			bool found = false;
 
 			size_t offset = 0;
@@ -118,6 +124,7 @@ static void chunk_reader_usage(const char *p)
 		"                        if not present, all keys will be shown\n" <<
 		" -n name            - key to be found is set to sha512(name)\n"
 		" -d                 - show data if present\n" <<
+		" -m                 - log mask\n"
 		" -h                 - this help\n" <<
 		std::endl;
 }
@@ -128,9 +135,10 @@ int main(int argc, char *argv[])
 	key k;
 	int klen = 0;
 	bool show_data = false;
+	int log_mask = SMACK_LOG_INFO | SMACK_LOG_ERROR;
 	int ch;
 
-	while ((ch = getopt(argc, argv, "p:k:n:dh")) != -1) {
+	while ((ch = getopt(argc, argv, "p:k:n:dhm:")) != -1) {
 		switch (ch) {
 			case 'p':
 				path.assign(optarg);
@@ -149,6 +157,9 @@ int main(int argc, char *argv[])
 			case 'd':
 				show_data = true;
 				break;
+			case 'm':
+				log_mask = atoi(optarg);
+				break;
 			case 'h':
 			default:
 				chunk_reader_usage(argv[0]);
@@ -163,6 +174,7 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	logger::instance()->init("/dev/stdout", 10);
-	chunk_reader chr(path, show_data, k, klen);
+	logger::instance()->init("/dev/stdout", log_mask);
+	//chunk_reader<boost::iostreams::zlib_decompressor> chr(path, show_data, k, klen);
+	chunk_reader<snappy_decompressor> chr(path, show_data, k, klen);
 }

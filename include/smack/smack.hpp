@@ -7,16 +7,19 @@
 #include <boost/bind.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/thread/condition.hpp>
+#include <boost/iostreams/filter/zlib.hpp>
+#include <boost/iostreams/filter/bzip2.hpp>
 #include <boost/thread.hpp>
 
 #include <smack/base.hpp>
 #include <smack/blob.hpp>
+#include <smack/snappy.hpp>
 
 namespace ioremap { namespace smack {
 
 namespace fs = boost::filesystem;
 
-template <class filter_t>
+template <class fout_t, class fin_t>
 class cache_processor {
 	public:
 		cache_processor(int thread_num) : need_exit_(0), processed_(0) {
@@ -33,9 +36,9 @@ class cache_processor {
 		}
 
 
-		void notify(boost::shared_ptr<blob<filter_t> > b) {
+		void notify(boost::shared_ptr<blob<fout_t, fin_t> > b) {
 			boost::mutex::scoped_lock guard(lock_);
-			typename std::deque<boost::shared_ptr<blob<filter_t> > >::iterator it = std::find(blobs_.begin(), blobs_.end(), b);
+			typename std::deque<boost::shared_ptr<blob<fout_t, fin_t> > >::iterator it = std::find(blobs_.begin(), blobs_.end(), b);
 			if (it == blobs_.end())
 				blobs_.push_back(b);
 
@@ -53,14 +56,14 @@ class cache_processor {
 	private:
 		boost::mutex lock_;
 		boost::condition cond_;
-		std::deque<boost::shared_ptr<blob<filter_t> > > blobs_;
+		std::deque<boost::shared_ptr<blob<fout_t, fin_t> > > blobs_;
 		boost::thread_group group_;
 		int need_exit_;
 		int processed_;
 
 		void process(void) {
 			while (!need_exit_) {
-				boost::shared_ptr<blob<filter_t> > b;
+				boost::shared_ptr<blob<fout_t, fin_t> > b;
 
 				{
 					boost::mutex::scoped_lock guard(lock_);
@@ -91,7 +94,7 @@ class cache_processor {
 };
 
 
-template <class filter_t>
+template <class fout_t, class fin_t>
 class smack {
 	public:
 		smack(		const std::string &path,
@@ -130,7 +133,7 @@ class smack {
 					std::string file = path + "/" + tmp;
 					log(SMACK_LOG_NOTICE, "open: %s\n", file.c_str());
 
-					boost::shared_ptr<blob<filter_t> > b(new blob<filter_t>(file, bloom_size, max_cache_size));
+					boost::shared_ptr<blob<fout_t, fin_t> > b(new blob<fout_t, fin_t>(file, bloom_size, max_cache_size));
 					blobs_.insert(std::make_pair(b->start(), b));
 
 					if (num > blob_num_)
@@ -140,8 +143,8 @@ class smack {
 
 			if (blobs_.size() == 0)
 				blobs_.insert(std::make_pair(key(),
-						boost::shared_ptr<blob<filter_t> >(
-							new blob<filter_t>(path + "/smack.0", bloom_size, max_cache_size))));
+						boost::shared_ptr<blob<fout_t, fin_t> >(
+							new blob<fout_t, fin_t>(path + "/smack.0", bloom_size, max_cache_size))));
 		}
 
 		virtual ~smack() {
@@ -149,7 +152,7 @@ class smack {
 		}
 
 		void write(const key &key, const char *data, size_t size) {
-			boost::shared_ptr<blob<filter_t> > curb = blob_lookup(key, false);
+			boost::shared_ptr<blob<fout_t, fin_t> > curb = blob_lookup(key, false);
 
 			if (curb->write(key, data, size)) {
 #if 1
@@ -164,7 +167,7 @@ class smack {
 						(data_size > 10 * 1024 * 1024) &&
 						!have_split) {
 					blob_num_++;
-					boost::shared_ptr<blob<filter_t> > b(new blob<filter_t>(
+					boost::shared_ptr<blob<fout_t, fin_t> >	b(new blob<fout_t, fin_t>(
 								path_base_ + "/smack." + boost::lexical_cast<std::string>(blob_num_),
 								bloom_size_, max_cache_size_));
 
@@ -182,13 +185,13 @@ class smack {
 		}
 
 		void remove(const key &key) {
-			boost::shared_ptr<blob<filter_t> > curb = blob_lookup(key, true);
+			boost::shared_ptr<blob<fout_t, fin_t> > curb = blob_lookup(key, true);
 			if (curb->remove(key))
 				proc_.notify(curb);
 		}
 
 		void sync(void) {
-			for (typename std::map<key, boost::shared_ptr<blob<filter_t> >, keycomp>::iterator it = blobs_.begin();
+			for (typename std::map<key, boost::shared_ptr<blob<fout_t, fin_t> >, keycomp>::iterator it = blobs_.begin();
 					it != blobs_.end(); ++it) {
 				proc_.notify(it->second);
 			}
@@ -197,29 +200,29 @@ class smack {
 		}
 
 		std::string lookup(key &k) {
-			boost::shared_ptr<blob<filter_t> > curb = blob_lookup(k, true);
+			boost::shared_ptr<blob<fout_t, fin_t> > curb = blob_lookup(k, true);
 			return curb->lookup(k);
 		}
 
 	private:
-		std::map<key, boost::shared_ptr<blob<filter_t> >, keycomp> blobs_;
+		std::map<key, boost::shared_ptr<blob<fout_t, fin_t> >, keycomp> blobs_;
 		boost::mutex m_blobs_lock;
 		std::string path_base_;
 		int bloom_size_;
 		int blob_num_;
 		size_t max_cache_size_;
 		size_t max_blob_num_;
-		cache_processor<filter_t> proc_;
+		cache_processor<fout_t, fin_t> proc_;
 
-		boost::shared_ptr<blob<filter_t> > blob_lookup(const key &k, bool check_start_key = false) {
+		boost::shared_ptr<blob<fout_t, fin_t> > blob_lookup(const key &k, bool check_start_key = false) {
 			boost::mutex::scoped_lock guard(m_blobs_lock);
 
 			if (blobs_.size() == 0)
 				throw std::out_of_range("smack::blob-lookup::no-blobs");
 			
-			boost::shared_ptr<blob<filter_t> > b;
+			boost::shared_ptr<blob<fout_t, fin_t> > b;
 
-			typename std::map<key, boost::shared_ptr<blob<filter_t> >, keycomp>::iterator it = blobs_.upper_bound(k);
+			typename std::map<key, boost::shared_ptr<blob<fout_t, fin_t> >, keycomp>::iterator it = blobs_.upper_bound(k);
 			if (it == blobs_.end()) {
 				b = blobs_.rbegin()->second;
 			} else if (it == blobs_.begin()) {
@@ -234,6 +237,10 @@ class smack {
 			return b;
 		}
 };
+
+typedef smack<boost::iostreams::zlib_compressor, boost::iostreams::zlib_decompressor> smack_zlib;
+typedef smack<boost::iostreams::bzip2_compressor, boost::iostreams::bzip2_decompressor> smack_bzip2;
+typedef smack<snappy_compressor, snappy_decompressor> smack_snappy;
 
 }}
 

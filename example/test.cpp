@@ -1,8 +1,15 @@
 #include <boost/lexical_cast.hpp>
 
+#include <boost/iostreams/filter/zlib.hpp>
+#include <boost/iostreams/filter/bzip2.hpp>
+
+#include <smack/snappy.hpp>
 #include <smack/smack.hpp>
 
 using namespace ioremap::smack;
+namespace bio = boost::iostreams;
+
+#define USE_SNAPPY
 
 int main(int argc, char *argv[])
 {
@@ -21,7 +28,22 @@ int main(int argc, char *argv[])
 	size_t max_cache_size = 1000;
 	int max_blob_num = 100;
 	int cache_thread_num = 4;
-	smack<file> s(path, bloom_size, max_cache_size, max_blob_num, cache_thread_num);
+#ifdef USE_ZLIB
+	smack<boost::iostreams::zlib_compressor, boost::iostreams::zlib_decompressor> s(path, bloom_size,
+			max_cache_size, max_blob_num, cache_thread_num);
+#else
+#ifdef USE_BZIP2
+	smack<boost::iostreams::bzip2_compressor, boost::iostreams::bzip2_decompressor> s(path, bloom_size,
+			max_cache_size, max_blob_num, cache_thread_num);
+#else
+#ifdef USE_SNAPPY
+	smack<snappy_compressor, snappy_decompressor> s(path, bloom_size,
+			max_cache_size, max_blob_num, cache_thread_num);
+#else
+#error "No compression algorithm specified"
+#endif /* SNAPPY */
+#endif /* BZIP2 */
+#endif /* ZLIB */
 
 	std::string data = "we;lkqrjw34npvqt789340cmq23p490crtm qwpe90xwp oqu;evoeiruqvwoeiruqvbpoeiqnpqvriuevqiouei uropqwie qropeiru qwopeir";
 	std::string key_base = "qweqeqwe-";
@@ -37,7 +59,7 @@ int main(int argc, char *argv[])
 #endif
 	//logger::instance()->init("/dev/stdout", 0xff);
 
-#if 1
+#if 0
 	log(SMACK_LOG_INFO, "starting write test\n");
 	gettimeofday(&start, NULL);
 	for (i = 0; i < num; ++i) {
