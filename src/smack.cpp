@@ -6,7 +6,8 @@
 using namespace ioremap::smack;
 
 enum smack_storage_type {
-	SMACK_STORAGE_ZLIB = 0,
+	SMACK_STORAGE_ZLIB_DEFAULT = 0,
+	SMACK_STORAGE_ZLIB_BEST_COMPRESSION,
 	SMACK_STORAGE_BZIP2,
 	SMACK_STORAGE_SNAPPY,
 	SMACK_STORAGE_LZ4_FAST,
@@ -15,7 +16,8 @@ enum smack_storage_type {
 
 struct smack_ctl {
 	union {
-		smack_zlib		*smz;
+		smack_zlib_default	*smzd;
+		smack_zlib_best		*smzb;
 		smack_bzip2		*smb;
 		smack_snappy		*sms;
 		smack_lz4_fast		*smlf;
@@ -38,9 +40,11 @@ struct smack_ctl *smack_init(struct smack_init_ctl *ictl, int *errp)
 	memset(ctl, 0, sizeof(struct smack_ctl));
 
 	if (!ictl->type) {
-		ctl->type = SMACK_STORAGE_ZLIB;
+		ctl->type = SMACK_STORAGE_ZLIB_DEFAULT;
 	} else if (!strcmp(ictl->type, "zlib")) {
-		ctl->type = SMACK_STORAGE_ZLIB;
+		ctl->type = SMACK_STORAGE_ZLIB_DEFAULT;
+	} else if (!strcmp(ictl->type, "zlib_best")) {
+		ctl->type = SMACK_STORAGE_ZLIB_BEST_COMPRESSION;
 	} else if (!strcmp(ictl->type, "bzip2")) {
 		ctl->type = SMACK_STORAGE_BZIP2;
 	} else if (!strcmp(ictl->type, "snappy")) {
@@ -58,8 +62,13 @@ struct smack_ctl *smack_init(struct smack_init_ctl *ictl, int *errp)
 		logger::instance()->init(ictl->log, ictl->log_mask);
 	try {
 		switch (ctl->type) {
-			case SMACK_STORAGE_ZLIB:
-				ctl->sm.smz = new smack_zlib(ictl->path,
+			case SMACK_STORAGE_ZLIB_DEFAULT:
+				ctl->sm.smzd = new smack_zlib_default(ictl->path,
+						ictl->bloom_size, ictl->max_cache_size,
+						ictl->max_blob_num, ictl->cache_thread_num);
+				break;
+			case SMACK_STORAGE_ZLIB_BEST_COMPRESSION:
+				ctl->sm.smzb = new smack_zlib_best(ictl->path,
 						ictl->bloom_size, ictl->max_cache_size,
 						ictl->max_blob_num, ictl->cache_thread_num);
 				break;
@@ -103,9 +112,13 @@ err_out_exit:
 void smack_cleanup(struct smack_ctl *ctl)
 {
 	switch (ctl->type) {
-		case SMACK_STORAGE_ZLIB:
-			if (ctl->sm.smz)
-				delete ctl->sm.smz;
+		case SMACK_STORAGE_ZLIB_DEFAULT:
+			if (ctl->sm.smzd)
+				delete ctl->sm.smzd;
+			break;
+		case SMACK_STORAGE_ZLIB_BEST_COMPRESSION:
+			if (ctl->sm.smzb)
+				delete ctl->sm.smzb;
 			break;
 		case SMACK_STORAGE_BZIP2:
 			if (ctl->sm.smb)
@@ -136,8 +149,11 @@ int smack_read(struct smack_ctl *ctl, struct index *idx, char **datap)
 	key k(idx);
 	try {
 		switch (ctl->type) {
-			case SMACK_STORAGE_ZLIB:
-				ret = ctl->sm.smz->read(k);
+			case SMACK_STORAGE_ZLIB_DEFAULT:
+				ret = ctl->sm.smzd->read(k);
+				break;
+			case SMACK_STORAGE_ZLIB_BEST_COMPRESSION:
+				ret = ctl->sm.smzb->read(k);
 				break;
 			case SMACK_STORAGE_BZIP2:
 				ret = ctl->sm.smb->read(k);
@@ -173,8 +189,11 @@ int smack_write(struct smack_ctl *ctl, struct index *idx, const char *data)
 	key k(idx);
 	try {
 		switch (ctl->type) {
-			case SMACK_STORAGE_ZLIB:
-				ctl->sm.smz->write(k, data, idx->data_size);
+			case SMACK_STORAGE_ZLIB_DEFAULT:
+				ctl->sm.smzd->write(k, data, idx->data_size);
+				break;
+			case SMACK_STORAGE_ZLIB_BEST_COMPRESSION:
+				ctl->sm.smzb->write(k, data, idx->data_size);
 				break;
 			case SMACK_STORAGE_BZIP2:
 				ctl->sm.smb->write(k, data, idx->data_size);
@@ -202,8 +221,11 @@ int smack_remove(struct smack_ctl *ctl, struct index *idx)
 		key k(idx);
 
 		switch (ctl->type) {
-			case SMACK_STORAGE_ZLIB:
-				ctl->sm.smz->remove(k);
+			case SMACK_STORAGE_ZLIB_DEFAULT:
+				ctl->sm.smzd->remove(k);
+				break;
+			case SMACK_STORAGE_ZLIB_BEST_COMPRESSION:
+				ctl->sm.smzb->remove(k);
 				break;
 			case SMACK_STORAGE_BZIP2:
 				ctl->sm.smb->remove(k);
@@ -231,8 +253,11 @@ int smack_lookup(struct smack_ctl *ctl, struct index *idx, char **pathp)
 		std::string path;
 
 		switch (ctl->type) {
-			case SMACK_STORAGE_ZLIB:
-				path = ctl->sm.smz->lookup(k);
+			case SMACK_STORAGE_ZLIB_DEFAULT:
+				path = ctl->sm.smzd->lookup(k);
+				break;
+			case SMACK_STORAGE_ZLIB_BEST_COMPRESSION:
+				path = ctl->sm.smzb->lookup(k);
 				break;
 			case SMACK_STORAGE_BZIP2:
 				path = ctl->sm.smb->lookup(k);

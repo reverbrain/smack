@@ -257,7 +257,8 @@ class zlib_max_compression_decompressor : public boost::iostreams::zlib_decompre
 				boost::iostreams::zlib_params(boost::iostreams::zlib::best_compression)) {}
 };
 
-typedef smack<zlib_max_compression_compressor, zlib_max_compression_decompressor> smack_zlib;
+typedef smack<zlib_max_compression_compressor, zlib_max_compression_decompressor> smack_zlib_best;
+typedef smack<boost::iostreams::zlib_compressor, boost::iostreams::zlib_decompressor> smack_zlib_default;
 typedef smack<boost::iostreams::bzip2_compressor, boost::iostreams::bzip2_decompressor> smack_bzip2;
 typedef smack<snappy::snappy_compressor, snappy::snappy_decompressor> smack_snappy;
 typedef smack<lz4::fast_compressor, lz4::decompressor> smack_lz4_fast;
