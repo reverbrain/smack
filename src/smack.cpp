@@ -5,11 +5,21 @@
 
 using namespace ioremap::smack;
 
+enum smack_storage_type {
+	SMACK_STORAGE_ZLIB = 0,
+	SMACK_STORAGE_BZIP2,
+	SMACK_STORAGE_SNAPPY,
+	SMACK_STORAGE_LZ4_FAST,
+	SMACK_STORAGE_LZ4_HIGH,
+};
+
 struct smack_ctl {
 	union {
 		smack_zlib		*smz;
 		smack_bzip2		*smb;
 		smack_snappy		*sms;
+		smack_lz4_fast		*smlf;
+		smack_lz4_high		*smlh;
 	} sm;
 
 	smack_storage_type type;
@@ -25,14 +35,29 @@ struct smack_ctl *smack_init(struct smack_init_ctl *ictl, int *errp)
 		err = -ENOMEM;
 		goto err_out_exit;
 	}
-
 	memset(ctl, 0, sizeof(struct smack_ctl));
+
+	if (!ictl->type) {
+		ctl->type = SMACK_STORAGE_ZLIB;
+	} else if (!strcmp(ictl->type, "zlib")) {
+		ctl->type = SMACK_STORAGE_ZLIB;
+	} else if (!strcmp(ictl->type, "bzip2")) {
+		ctl->type = SMACK_STORAGE_BZIP2;
+	} else if (!strcmp(ictl->type, "snappy")) {
+		ctl->type = SMACK_STORAGE_SNAPPY;
+	} else if (!strcmp(ictl->type, "lz4_fast")) {
+		ctl->type = SMACK_STORAGE_LZ4_FAST;
+	} else if (!strcmp(ictl->type, "lz4_HIGH")) {
+		ctl->type = SMACK_STORAGE_LZ4_HIGH;
+	} else {
+		err = -ENOTSUP;
+		goto err_out_free;
+	}
 
 	if (ictl->log)
 		logger::instance()->init(ictl->log, ictl->log_mask);
 	try {
-		ctl->type = ictl->type;
-		switch (ictl->type) {
+		switch (ctl->type) {
 			case SMACK_STORAGE_ZLIB:
 				ctl->sm.smz = new smack_zlib(ictl->path,
 						ictl->bloom_size, ictl->max_cache_size,
@@ -48,9 +73,16 @@ struct smack_ctl *smack_init(struct smack_init_ctl *ictl, int *errp)
 						ictl->bloom_size, ictl->max_cache_size,
 						ictl->max_blob_num, ictl->cache_thread_num);
 				break;
-			default:
-				err = -ENOTSUP;
-				goto err_out_free;
+			case SMACK_STORAGE_LZ4_FAST:
+				ctl->sm.smlf = new smack_lz4_fast(ictl->path,
+						ictl->bloom_size, ictl->max_cache_size,
+						ictl->max_blob_num, ictl->cache_thread_num);
+				break;
+			case SMACK_STORAGE_LZ4_HIGH:
+				ctl->sm.smlh = new smack_lz4_high(ictl->path,
+						ictl->bloom_size, ictl->max_cache_size,
+						ictl->max_blob_num, ictl->cache_thread_num);
+				break;
 		}
 	} catch (const std::exception &e) {
 		log(SMACK_LOG_ERROR, "could not initialize smack\n");
@@ -83,7 +115,13 @@ void smack_cleanup(struct smack_ctl *ctl)
 			if (ctl->sm.sms)
 				delete ctl->sm.sms;
 			break;
-		default:
+		case SMACK_STORAGE_LZ4_FAST:
+			if (ctl->sm.smlf)
+				delete ctl->sm.smlf;
+			break;
+		case SMACK_STORAGE_LZ4_HIGH:
+			if (ctl->sm.smlh)
+				delete ctl->sm.smlh;
 			break;
 	}
 
@@ -107,8 +145,12 @@ int smack_read(struct smack_ctl *ctl, struct index *idx, char **datap)
 			case SMACK_STORAGE_SNAPPY:
 				ret = ctl->sm.sms->read(k);
 				break;
-			default:
-				throw std::runtime_error("invalid smack ctl type");
+			case SMACK_STORAGE_LZ4_FAST:
+				ret = ctl->sm.smlf->read(k);
+				break;
+			case SMACK_STORAGE_LZ4_HIGH:
+				ret = ctl->sm.smlh->read(k);
+				break;
 		}
 
 		data = (char *)malloc(ret.size());
@@ -140,8 +182,12 @@ int smack_write(struct smack_ctl *ctl, struct index *idx, const char *data)
 			case SMACK_STORAGE_SNAPPY:
 				ctl->sm.sms->write(k, data, idx->data_size);
 				break;
-			default:
-				throw std::runtime_error("invalid smack ctl type");
+			case SMACK_STORAGE_LZ4_FAST:
+				ctl->sm.smlf->write(k, data, idx->data_size);
+				break;
+			case SMACK_STORAGE_LZ4_HIGH:
+				ctl->sm.smlh->write(k, data, idx->data_size);
+				break;
 		}
 		return 0;
 	} catch (const std::exception &e) {
@@ -165,8 +211,12 @@ int smack_remove(struct smack_ctl *ctl, struct index *idx)
 			case SMACK_STORAGE_SNAPPY:
 				ctl->sm.sms->remove(k);
 				break;
-			default:
-				throw std::runtime_error("invalid smack ctl type");
+			case SMACK_STORAGE_LZ4_FAST:
+				ctl->sm.smlf->remove(k);
+				break;
+			case SMACK_STORAGE_LZ4_HIGH:
+				ctl->sm.smlh->remove(k);
+				break;
 		}
 	} catch (...) {
 		return -EINVAL;
@@ -190,8 +240,12 @@ int smack_lookup(struct smack_ctl *ctl, struct index *idx, char **pathp)
 			case SMACK_STORAGE_SNAPPY:
 				path = ctl->sm.sms->lookup(k);
 				break;
-			default:
-				throw std::runtime_error("invalid smack ctl type");
+			case SMACK_STORAGE_LZ4_FAST:
+				path = ctl->sm.smlf->lookup(k);
+				break;
+			case SMACK_STORAGE_LZ4_HIGH:
+				path = ctl->sm.smlh->lookup(k);
+				break;
 		}
 
 		path += ".data";

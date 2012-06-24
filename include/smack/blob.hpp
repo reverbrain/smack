@@ -277,6 +277,10 @@ class blob_store {
 				tmp.resize(idx.data_size);
 				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)tmp.data(), idx.data_size);
 
+				log(SMACK_LOG_DSA, "%s: %s: %d/%d: ts: %zu, data-size: %d\n",
+						m_path_base.c_str(), key(&idx).str(), i, ch.ctl()->num, idx.ts, idx.data_size);
+
+
 				cache.insert(std::make_pair(key(&idx), tmp));
 
 				offset += sizeof(struct index) + idx.data_size;

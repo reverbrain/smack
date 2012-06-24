@@ -9,7 +9,7 @@
 using namespace ioremap::smack;
 namespace bio = boost::iostreams;
 
-#define USE_SNAPPY
+#define USE_ZLIB
 
 int main(int argc, char *argv[])
 {
@@ -37,10 +37,20 @@ int main(int argc, char *argv[])
 			max_cache_size, max_blob_num, cache_thread_num);
 #else
 #ifdef USE_SNAPPY
-	smack<snappy_compressor, snappy_decompressor> s(path, bloom_size,
+	smack<ioremap::smack::snappy::snappy_compressor, ioremap::smack::snappy::snappy_decompressor> s(path, bloom_size,
+			max_cache_size, max_blob_num, cache_thread_num);
+#else
+#ifdef USE_LZ4_FAST
+	smack<ioremap::smack::lz4::fast_compressor, ioremap::smack::lz4::decompressor> s(path, bloom_size,
+			max_cache_size, max_blob_num, cache_thread_num);
+#else
+#ifdef USE_LZ4_HIGH
+	smack<ioremap::smack::lz4::high_compressor, ioremap::smack::lz4::decompressor> s(path, bloom_size,
 			max_cache_size, max_blob_num, cache_thread_num);
 #else
 #error "No compression algorithm specified"
+#endif /* LZ4_HIGH */
+#endif /* LZ4_FAST */
 #endif /* SNAPPY */
 #endif /* BZIP2 */
 #endif /* ZLIB */
@@ -59,7 +69,7 @@ int main(int argc, char *argv[])
 #endif
 	//logger::instance()->init("/dev/stdout", 0xff);
 
-#if 0
+#if 1
 	log(SMACK_LOG_INFO, "starting write test\n");
 	gettimeofday(&start, NULL);
 	for (i = 0; i < num; ++i) {

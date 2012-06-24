@@ -1,5 +1,5 @@
-#ifndef __SNAPPY_HPP
-#define __SNAPPY_HPP
+#ifndef __LZ4_HPP
+#define __LZ4_HPP
 
 #include <algorithm>
 #include <vector>
@@ -9,27 +9,34 @@
 #include <boost/iostreams/operations.hpp>
 #include <boost/iostreams/char_traits.hpp>
 
-#include <snappy.h>
-
+#include <smack/lz4.h>
+#include <smack/lz4hc.h>
 #include <smack/base.hpp>
 
 namespace bio = boost::iostreams;
 
-namespace ioremap { namespace smack { namespace snappy {
+namespace ioremap { namespace smack { namespace lz4 {
 
-enum snappy_state {
+enum state {
 	s_start = 0,
 	s_done,
 	s_have_data,
 };
 
-struct snappy_header {
-	uint64_t		size;
+enum compression_type {
+	lz4_fast = 1,
+	lz4_high,
 };
 
-class snappy_decompressor : public bio::multichar_input_filter {
+/* lz4 chunk is at most 32-bits long */
+struct header {
+	int32_t		compressed_size;
+	int32_t		uncompressed_size;
+};
+
+class decompressor : public bio::multichar_input_filter {
 	public:
-		explicit snappy_decompressor(size_t chunk_size = 1024 * 1024) :
+		explicit decompressor(size_t chunk_size = 1024 * 1024) :
 		s_state(s_start),
 		m_chunk(chunk_size),
 		m_dec_offset(0)
@@ -51,27 +58,35 @@ class snappy_decompressor : public bio::multichar_input_filter {
 						break;
 				}
 
-				struct snappy_header header;
-				std::streamsize h = bio::read(src, (char *)&header, sizeof(struct snappy_header));
+				struct header header;
+				std::streamsize h = bio::read(src, (char *)&header, sizeof(struct header));
 				if (h < 0) {
 					if (!total)
 						total = -1;
 					break;
 				}
 
-				m_chunk.resize(header.size);
-				std::streamsize have = bio::read(src, (char *)m_chunk.data(), header.size);
+				m_chunk.resize(header.compressed_size);
+				std::streamsize have = bio::read(src, (char *)m_chunk.data(), header.compressed_size);
 				if (have == -1) {
 					if (!total)
 						total = -1;
 					break;
 				}
 
-				bool good = ::snappy::Uncompress(m_chunk.data(), have, &m_dec);
-				if (!good)
+				m_dec.resize(header.uncompressed_size);
+				int consumed = LZ4_uncompress(m_chunk.data(), (char *)m_dec.data(), header.uncompressed_size);
+				if (consumed < 0)
 					return -1;
 
-				log(SMACK_LOG_DSA, "snappy: decompress: %zd -> %zd\n", have, m_dec.size());
+				if (consumed > header.compressed_size) {
+					log(SMACK_LOG_ERROR, "lz4: decompression header: compressed: %d, "
+							"uncompressed: %d, consumed: %d\n",
+							header.compressed_size, header.uncompressed_size, consumed);
+					throw std::runtime_error("lz4: decompression header mismatch");
+				}
+
+				log(SMACK_LOG_DSA, "lz4: decompress: read: %zd, consumed: %d -> %d\n", have, consumed, header.uncompressed_size);
 
 				m_dec_offset = 0;
 				s_state = s_have_data;
@@ -90,9 +105,10 @@ class snappy_decompressor : public bio::multichar_input_filter {
 		}
 
 	private:
-		snappy_state s_state;
+		int (* m_uncompress_function)(const char* source, char* dest, int osize);
+		state s_state;
 		std::vector<char> m_chunk;
-		std::string m_dec;
+		std::vector<char> m_dec;
 		std::streamsize m_dec_offset;
 
 		std::streamsize copy(char *s, std::streamsize have_space) {
@@ -110,14 +126,19 @@ class snappy_decompressor : public bio::multichar_input_filter {
 		}
 };
 
-class snappy_compressor : public bio::multichar_output_filter {
+class compressor : public bio::multichar_output_filter {
 	public:
-		explicit snappy_compressor(size_t chunk_size = 1024 * 1024) :
+		explicit compressor(compression_type type, size_t chunk_size = 1024 * 1024) :
+		m_compress_function(NULL),
 		s_state(s_start),
 		m_chunk(chunk_size),
 		m_chunk_size(0),
 		m_compr_offset(0)
 		{
+			if (type == lz4_high)
+				m_compress_function = LZ4_compressHC;
+			else
+				m_compress_function = LZ4_compress;
 		}
 
 		template<typename Sink>
@@ -164,7 +185,8 @@ class snappy_compressor : public bio::multichar_output_filter {
 		}
 
 	private:
-		snappy_state s_state;
+		int (* m_compress_function)(const char* source, char* dest, int isize);
+		state s_state;
 		std::vector<char> m_chunk;
 		std::streamsize m_chunk_size;
 		std::string m_compr;
@@ -172,18 +194,22 @@ class snappy_compressor : public bio::multichar_output_filter {
 
 		template<typename Sink>
 		void compress(Sink &dst) {
-			::snappy::Compress(m_chunk.data(), m_chunk_size, &m_compr);
-			log(SMACK_LOG_DSA, "snappy: compress: %zd -> %zd\n", m_chunk_size, m_compr.size());
+			m_compr.resize(LZ4_compressBound(m_chunk_size));
+			int compressed = m_compress_function(m_chunk.data(), (char *)m_compr.data(), m_chunk_size);
+			m_compr.resize(compressed);
+
+			log(SMACK_LOG_DSA, "lz4: compress: %zd -> %zd\n", m_chunk_size, m_compr.size());
+
+			struct header header;
+
+			header.compressed_size = m_compr.size();
+			header.uncompressed_size = m_chunk_size;
+
+			bio::write(dst, (char *)&header, sizeof(struct header));
 
 			m_compr_offset = 0;
 			s_state = s_have_data;
 			m_chunk_size = 0;
-
-			struct snappy_header header;
-			memset(&header, 0, sizeof(struct snappy_header));
-
-			header.size = m_compr.size();
-			bio::write(dst, (char *)&header, sizeof(struct snappy_header));
 		}
 
 		template<typename Sink>
@@ -202,7 +228,16 @@ class snappy_compressor : public bio::multichar_output_filter {
 		}
 };
 
+class high_compressor : public compressor {
+	public:
+		high_compressor(size_t chunk_size = 1024 * 1024) : compressor(lz4_high, chunk_size) {};
+};
+
+class fast_compressor : public compressor {
+	public:
+		fast_compressor(size_t chunk_size = 1024 * 1024) : compressor(lz4_fast, chunk_size) {};
+};
 
 }}}
 
-#endif /* __SNAPPY_HPP */
+#endif /* __LZ4_HPP */

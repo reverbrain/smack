@@ -176,5 +176,5 @@ int main(int argc, char *argv[])
 
 	logger::instance()->init("/dev/stdout", log_mask);
 	//chunk_reader<boost::iostreams::zlib_decompressor> chr(path, show_data, k, klen);
-	chunk_reader<snappy_decompressor> chr(path, show_data, k, klen);
+	chunk_reader<ioremap::smack::snappy::snappy_decompressor> chr(path, show_data, k, klen);
 }

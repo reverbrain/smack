@@ -14,6 +14,7 @@
 #include <smack/base.hpp>
 #include <smack/blob.hpp>
 #include <smack/snappy.hpp>
+#include <smack/lz4.hpp>
 
 namespace ioremap { namespace smack {
 
@@ -246,7 +247,9 @@ class smack {
 
 typedef smack<boost::iostreams::zlib_compressor, boost::iostreams::zlib_decompressor> smack_zlib;
 typedef smack<boost::iostreams::bzip2_compressor, boost::iostreams::bzip2_decompressor> smack_bzip2;
-typedef smack<snappy_compressor, snappy_decompressor> smack_snappy;
+typedef smack<snappy::snappy_compressor, snappy::snappy_decompressor> smack_snappy;
+typedef smack<lz4::fast_compressor, lz4::decompressor> smack_lz4_fast;
+typedef smack<lz4::high_compressor, lz4::decompressor> smack_lz4_high;
 
 }}
 
