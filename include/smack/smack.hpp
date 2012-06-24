@@ -244,19 +244,7 @@ class smack {
 		}
 };
 
-class zlib_max_compression_compressor : public boost::iostreams::zlib_compressor {
-	public:
-		zlib_max_compression_compressor() : boost::iostreams::zlib_compressor(
-				boost::iostreams::zlib_params(boost::iostreams::zlib::best_compression)) {}
-};
-
-class zlib_max_compression_decompressor : public boost::iostreams::zlib_decompressor {
-	public:
-		zlib_max_compression_decompressor() : boost::iostreams::zlib_decompressor(
-				boost::iostreams::zlib_params(boost::iostreams::zlib::best_compression)) {}
-};
-
-typedef smack<zlib_max_compression_compressor, zlib_max_compression_decompressor> smack_zlib;
+typedef smack<boost::iostreams::zlib_compressor, boost::iostreams::zlib_decompressor> smack_zlib;
 typedef smack<boost::iostreams::bzip2_compressor, boost::iostreams::bzip2_decompressor> smack_bzip2;
 typedef smack<snappy_compressor, snappy_decompressor> smack_snappy;
 
