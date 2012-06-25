@@ -104,56 +104,6 @@ class logger {
 			logger::instance()->do_log((mask), ##msg); \
 	} while (0)
 
-class file {
-	public:
-		file(const std::string &path);
-		file(int fd_);
-
-		virtual ~file();
-
-		void write(const char *data, size_t offset, size_t size);
-		void read(char *data, size_t offset, size_t size);
-
-		size_t size() const;
-		void set_size(size_t size);
-
-		void truncate(ssize_t size);
-
-		int get() const;
-
-	protected:
-		int fd;
-		size_t size_;
-};
-
-class mmap : public file {
-	public:
-		mmap(const std::string &path);
-		mmap(int fd);
-
-		virtual ~mmap();
-
-	protected:
-		char *data_;
-		size_t mapped_size;
-		boost::mutex lock;
-
-		void do_mmap();
-		void remap();
-
-		void check_and_remap(size_t offset) {
-			if (offset > mapped_size) {
-				remap();
-				if (offset > mapped_size) {
-					std::ostringstream str;
-					str << "[] is out of bands, mapped-size: " << mapped_size <<
-						", total-size: " << size() << ", offset: " << offset;
-					throw std::range_error(str.str());
-				}
-			}
-		}
-};
-
 typedef unsigned int (* bloom_hash_t)(const char *data, int size);
 
 class bloom {
