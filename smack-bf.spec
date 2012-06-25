@@ -1,6 +1,6 @@
 Summary:	low-level IO storage which packs data into sorted (optionally compressed) blobs
 Name:		smack
-Version:	0.1.1
+Version:	0.2.0
 Release:	1%{?dist}.1
 
 License:	GPLv2+
@@ -69,6 +69,11 @@ rm -rf %{buildroot}
 %{_libdir}/lib*.so
 
 %changelog
+* Mon Jun 25 2012 Evgeniy Polyakov <zbr@ioremap.net> - 0.2.0
+- Added lz4 (default and high) compression
+- Added zlib high compression
+- Interface updates
+
 * Fri Jun 22 2012 Evgeniy Polyakov <zbr@ioremap.net> - 0.1.1
 - Do not use lib64 as default install library dir
 
