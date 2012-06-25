@@ -192,7 +192,7 @@ class blob_store {
 						break;
 					}
 				}
-#if 0
+#if 1
 				/*
 				 * XXX XXX XXX XXX XXX
 				 *
