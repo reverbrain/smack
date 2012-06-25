@@ -9,65 +9,44 @@
 using namespace ioremap::smack;
 namespace bio = boost::iostreams;
 
-#define USE_ZLIB
-
 int main(int argc, char *argv[])
 {
-	logger::instance()->init("/dev/stdout", 10);
 	std::string path("/tmp/smack/test");
 	long diff;
 
 	//rewrite_test();
 
-	if (argc > 1)
-		path.assign(argv[1]);
+	if (argc < 2) {
+		std::cerr << "Usage: " << argv[0] << " compression <path>" << std::endl;
+		return -1;
+	}
+	if (argc > 2)
+		path.assign(argv[2]);
 
-	log(SMACK_LOG_INFO, "starting test in %s\n", path.c_str());
+	struct smack_init_ctl ictl;
+	struct smack_ctl *sctl;
 
-	size_t bloom_size = 1024;
-	size_t max_cache_size = 1000;
-	int max_blob_num = 100;
-	int cache_thread_num = 4;
-#ifdef USE_ZLIB
-	smack<boost::iostreams::zlib_compressor, boost::iostreams::zlib_decompressor> s(path, bloom_size,
-			max_cache_size, max_blob_num, cache_thread_num);
-#else
-#ifdef USE_BZIP2
-	smack<boost::iostreams::bzip2_compressor, boost::iostreams::bzip2_decompressor> s(path, bloom_size,
-			max_cache_size, max_blob_num, cache_thread_num);
-#else
-#ifdef USE_SNAPPY
-	smack<ioremap::smack::snappy::snappy_compressor, ioremap::smack::snappy::snappy_decompressor> s(path, bloom_size,
-			max_cache_size, max_blob_num, cache_thread_num);
-#else
-#ifdef USE_LZ4_FAST
-	smack<ioremap::smack::lz4::fast_compressor, ioremap::smack::lz4::decompressor> s(path, bloom_size,
-			max_cache_size, max_blob_num, cache_thread_num);
-#else
-#ifdef USE_LZ4_HIGH
-	smack<ioremap::smack::lz4::high_compressor, ioremap::smack::lz4::decompressor> s(path, bloom_size,
-			max_cache_size, max_blob_num, cache_thread_num);
-#else
-#error "No compression algorithm specified"
-#endif /* LZ4_HIGH */
-#endif /* LZ4_FAST */
-#endif /* SNAPPY */
-#endif /* BZIP2 */
-#endif /* ZLIB */
+	memset(&ictl, 0, sizeof(struct smack_init_ctl));
+	ictl.path = (char *)path.c_str();
+	ictl.log = (char *)"/dev/stdout";
+	ictl.log_mask = 10;
+	ictl.flush = 1;
+	ictl.bloom_size  = 1024;
+	ictl.max_cache_size = 1000;
+	ictl.max_blob_num = 100;
+	ictl.cache_thread_num = 4;
+	ictl.type = argv[1];
+
+	int err;
+	sctl = smack_init(&ictl, &err);
+	if (err)
+		return err;
 
 	std::string data = "we;lkqrjw34npvqt789340cmq23p490crtm qwpe90xwp oqu;evoeiruqvwoeiruqvbpoeiqnpqvriuevqiouei uropqwie qropeiru qwopeir";
 	std::string key_base = "qweqeqwe-";
 
 	long num = 1000000, i;
 	struct timeval start, end;
-
-#if 0
-	io_test<file>("/tmp/smack/smack", num);
-	io_test<mmap>("/tmp/smack/smack", num);
-	io_test<bloom>("/tmp/smack/smack", num);
-	exit(0);
-#endif
-	//logger::instance()->init("/dev/stdout", 0xff);
 
 #if 1
 	log(SMACK_LOG_INFO, "starting write test\n");
@@ -77,9 +56,12 @@ int main(int argc, char *argv[])
 		str << key_base << i;
 		key key(str.str());
 
+		struct index idx = *key.idx();
+
 		log(SMACK_LOG_DATA, "%s: write key: %s\n", key.str(), str.str().c_str());
 		std::string d = data + str.str() + "\n";
-		s.write(key, d.data(), d.size());
+		idx.data_size = d.size();
+		smack_write(sctl, &idx, d.data());
 
 		if (i && (i % 100000 == 0)) {
 			gettimeofday(&end, NULL);
@@ -96,7 +78,7 @@ int main(int argc, char *argv[])
 				i, diff / 1000000., i * 1000000 / diff, diff / i);
 	}
 
-	s.sync();
+	//s.sync();
 #endif
 
 #if 0
@@ -122,24 +104,26 @@ int main(int argc, char *argv[])
 		key key(str.str());
 
 		log(SMACK_LOG_DATA, "%s: read key: %s\n", key.str(), str.str().c_str());
+		char *rdata = NULL;
 		try {
-			std::string d = s.read(key);
+			int err = smack_read(sctl, (struct index *)key.idx(), &rdata);
+			if (err < 0)
+				throw std::runtime_error("no data");
+
+			int len = key.idx()->data_size;
 			std::string want = data + str.str() + "\n";
 
-			if (d != want) {
+			if (((int)want.size() != len) || memcmp(want.data(), rdata, want.size())) {
 				std::ostringstream err;
 
-				log(SMACK_LOG_ERROR, "%s: invalid read: key: %s, data-size: %zd, read: '%s', want: '%s'\n",
-						key.str(), str.str().c_str(), d.size(), d.c_str(), want.c_str());
-				{
-					ioremap::smack::key k(std::string("qweqeqwe-51"));
-					s.read(k);
-				}
+				log(SMACK_LOG_ERROR, "%s: invalid read: key: %s, data-size: %d, read: '%.*s', want: '%s'\n",
+						key.str(), str.str().c_str(), len, len, rdata, want.c_str());
 				err << key.str() << ": invalid read: key: " << str.str();
 				throw std::runtime_error(err.str());
 			}
-
+			free(rdata);
 		} catch (const std::exception &e) {
+			free(rdata);
 			log(SMACK_LOG_ERROR, "%s: could not read key '%s': %s\n", key.str(), str.str().c_str(), e.what());
 			break;
 		}

@@ -167,8 +167,6 @@ class blob_store {
 				out.push(out_processor);
 				out.push(dst_data);
 
-				out.set_auto_close(false);
-
 				size_t count = 0;
 				cache_t::iterator it;
 				int step = cache.size();
@@ -180,8 +178,12 @@ class blob_store {
 					struct index *idx = (struct index *)it->first.idx();
 					idx->data_size = it->second.size();
 
-					bio::write<bio::filtering_streambuf<bio::output> >(out, (char *)idx, sizeof(struct index));
-					bio::write<bio::filtering_streambuf<bio::output> >(out, it->second.data(), it->second.size());
+					std::string tmp;
+					tmp.reserve(sizeof(struct index) + it->second.size());
+					tmp.assign((char *)idx, sizeof(struct index));
+					tmp += it->second;
+
+					bio::write<bio::filtering_streambuf<bio::output> >(out, tmp.data(), tmp.size());
 
 					ch.add((char *)idx->id, SMACK_KEY_SIZE);
 
@@ -193,12 +195,34 @@ class blob_store {
 
 					data_offset += it->second.size() + sizeof(struct index);
 
+					log(SMACK_LOG_DSA, "%s: %s: stored %zd/%zd ts: %zu, data-size: %d\n",
+							m_path_base.c_str(), key(idx).str(), count, num, idx->ts, idx->data_size);
+
 					if (++count == num) {
 						ch.end().set(idx);
 						++it;
 						break;
 					}
 				}
+#if 0
+				/*
+				 * XXX XXX XXX XXX XXX
+				 *
+				 * This weird junk is needed because bzip2 somehow does not always flush buffers
+				 * back to disk, and the last record becomes corrupted (partially written).
+				 * 
+				 * This is strange, since if we put read_chunk() right at the end, it will always
+				 * correctly read all records, but with time something breaks.
+				 *
+				 * And I do not yet know why.
+				 *
+				 * zlib works perfectly good as well as large scale bzip2 tests on Ubuntu Lucid
+				 * (hundreds of millions of records)
+				 */
+				std::string tmp;
+				tmp.resize(128);
+				bio::write<bio::filtering_streambuf<bio::output> >(out, tmp.data(), tmp.size());
+#endif
 
 				cache.erase(cache.begin(), it);
 				out.strict_sync();
@@ -264,26 +288,32 @@ class blob_store {
 			struct timeval start, end;
 			gettimeofday(&start, NULL);
 
-			log(SMACK_LOG_NOTICE, "%s: read-chunk: num: %d, compressed-size: %zd, uncompressed-size: %zd\n",
-					m_path_base.c_str(), ch.ctl()->num, ch.ctl()->compressed_data_size, ch.ctl()->uncompressed_data_size);
+			log(SMACK_LOG_NOTICE, "%s: read-chunk: start: %s, end: %s, num: %d, compressed-size: %zd, uncompressed-size: %zd\n",
+					m_path_base.c_str(), ch.start().str(), ch.end().str(),
+					ch.ctl()->num, ch.ctl()->compressed_data_size, ch.ctl()->uncompressed_data_size);
 
 			struct index idx;
 
 			size_t offset = 0;
-			for (int i = 0; i < ch.ctl()->num; ++i) {
-				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)&idx, sizeof(struct index));
+			try {
+				for (int i = 0; i < ch.ctl()->num; ++i) {
+					bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)&idx, sizeof(struct index));
 
-				std::string tmp;
-				tmp.resize(idx.data_size);
-				bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)tmp.data(), idx.data_size);
-
-				log(SMACK_LOG_DSA, "%s: %s: %d/%d: ts: %zu, data-size: %d\n",
-						m_path_base.c_str(), key(&idx).str(), i, ch.ctl()->num, idx.ts, idx.data_size);
+					log(SMACK_LOG_DSA, "%s: %s: %d/%d: ts: %zu, data-size: %d\n",
+							m_path_base.c_str(), key(&idx).str(), i, ch.ctl()->num, idx.ts, idx.data_size);
 
 
-				cache.insert(std::make_pair(key(&idx), tmp));
+					std::string tmp;
+					tmp.resize(idx.data_size);
+					bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)tmp.data(), idx.data_size);
 
-				offset += sizeof(struct index) + idx.data_size;
+					cache.insert(std::make_pair(key(&idx), tmp));
+
+					offset += sizeof(struct index) + idx.data_size;
+				}
+			} catch (const bio::bzip2_error &e) {
+				log(SMACK_LOG_ERROR, "%s: %s: bzip error: %s: %d\n", m_path_base.c_str(), key(&idx).str(), e.what(), e.error());
+				throw;
 			}
 			gettimeofday(&end, NULL);
 
