@@ -51,7 +51,7 @@ struct smack_ctl *smack_init(struct smack_init_ctl *ictl, int *errp)
 		ctl->type = SMACK_STORAGE_SNAPPY;
 	} else if (!strcmp(ictl->type, "lz4_fast")) {
 		ctl->type = SMACK_STORAGE_LZ4_FAST;
-	} else if (!strcmp(ictl->type, "lz4_HIGH")) {
+	} else if (!strcmp(ictl->type, "lz4_high")) {
 		ctl->type = SMACK_STORAGE_LZ4_HIGH;
 	} else {
 		err = -ENOTSUP;
@@ -286,5 +286,64 @@ int smack_lookup(struct smack_ctl *ctl, struct index *idx, char **pathp)
 		return path.size();
 	} catch (...) {
 		return -EINVAL;
+	}
+}
+
+long long smack_total_num(struct smack_ctl *ctl)
+{
+	try {
+		long long num;
+		switch (ctl->type) {
+			case SMACK_STORAGE_ZLIB_DEFAULT:
+				num = ctl->sm.smzd->total_num();
+				break;
+			case SMACK_STORAGE_ZLIB_BEST_COMPRESSION:
+				num = ctl->sm.smzb->total_num();
+				break;
+			case SMACK_STORAGE_BZIP2:
+				num = ctl->sm.smb->total_num();
+				break;
+			case SMACK_STORAGE_SNAPPY:
+				num = ctl->sm.sms->total_num();
+				break;
+			case SMACK_STORAGE_LZ4_FAST:
+				num = ctl->sm.smlf->total_num();
+				break;
+			case SMACK_STORAGE_LZ4_HIGH:
+				num = ctl->sm.smlh->total_num();
+				break;
+		}
+
+		return num;
+	} catch (...) {
+		return -EINVAL;
+	}
+}
+
+void smack_sync(struct smack_ctl *ctl)
+{
+	try {
+		long long num;
+		switch (ctl->type) {
+			case SMACK_STORAGE_ZLIB_DEFAULT:
+				ctl->sm.smzd->sync();
+				break;
+			case SMACK_STORAGE_ZLIB_BEST_COMPRESSION:
+				ctl->sm.smzb->sync();
+				break;
+			case SMACK_STORAGE_BZIP2:
+				ctl->sm.smb->sync();
+				break;
+			case SMACK_STORAGE_SNAPPY:
+				ctl->sm.sms->sync();
+				break;
+			case SMACK_STORAGE_LZ4_FAST:
+				ctl->sm.smlf->sync();
+				break;
+			case SMACK_STORAGE_LZ4_HIGH:
+				ctl->sm.smlh->sync();
+				break;
+		}
+	} catch (...) {
 	}
 }
