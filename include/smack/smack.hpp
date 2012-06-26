@@ -165,10 +165,10 @@ class smack {
 #if 1
 				boost::mutex::scoped_lock guard(m_blobs_lock);
 
-				size_t data_size;
+				size_t data_size, num;
 				bool have_split;
 
-				curb->size(data_size, have_split);
+				curb->disk_stat(num, data_size, have_split);
 
 				if ((blobs_.size() < max_blob_num_) &&
 						(data_size > 10 * 1024 * 1024) &&
@@ -209,6 +209,22 @@ class smack {
 		std::string lookup(key &k) {
 			boost::shared_ptr<blob<fout_t, fin_t> > curb = blob_lookup(k, true);
 			return curb->lookup(k);
+		}
+
+		long long total_num() {
+			boost::mutex::scoped_lock guard(m_blobs_lock);
+
+			long long total_num = 0;
+			for (typename std::map<key, boost::shared_ptr<blob<fout_t, fin_t> >, keycomp>::iterator it = blobs_.begin();
+					it != blobs_.end(); ++it) {
+				size_t num, size;
+				bool have_split;
+
+				it->second->disk_stat(num, size, have_split);
+				total_num += num;
+			}
+
+			return total_num;
 		}
 
 	private:

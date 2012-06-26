@@ -74,8 +74,8 @@ int main(int argc, char *argv[])
 
 	if (i) {
 		diff = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
-		log(SMACK_LOG_INFO, "write: num: %ld, total-time: %.3f secs, ops: %ld, operation-time: %ld usecs\n",
-				i, diff / 1000000., i * 1000000 / diff, diff / i);
+		log(SMACK_LOG_INFO, "write: num: %ld/%lld, total-time: %.3f secs, ops: %ld, operation-time: %ld usecs\n",
+				i, smack_total_num(sctl), diff / 1000000., i * 1000000 / diff, diff / i);
 	}
 
 	//s.sync();
@@ -139,8 +139,8 @@ int main(int argc, char *argv[])
 
 	if (i) {
 		diff = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
-		log(SMACK_LOG_INFO, "read: num: %ld, total-time: %ld usecs, ops: %ld, operation-time: %ld usecs\n",
-				i, diff, i * 1000000 / diff, diff / i);
+		log(SMACK_LOG_INFO, "read: num: %ld/%lld, total-time: %ld usecs, ops: %ld, operation-time: %ld usecs\n",
+				i, smack_total_num(sctl), diff, i * 1000000 / diff, diff / i);
 	}
 
 	return 0;

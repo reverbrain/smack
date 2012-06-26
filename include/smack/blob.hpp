@@ -15,7 +15,6 @@
 
 #include <boost/thread/condition.hpp>
 #include <boost/iostreams/device/file.hpp>
-#include <boost/iostreams/device/file_descriptor.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
 
 #include <boost/iostreams/copy.hpp>
@@ -384,7 +383,7 @@ class blob_store {
 			boost::filesystem::remove(m_path_base + ".chunk");
 		}
 
-		/* returns data size on disk */
+		/* returns data size on disk and number of elements */
 		void size(size_t &data_size) {
 			data_size = 0;
 			try {
@@ -543,8 +542,9 @@ class blob {
 				m_chunk_idx = idx;
 				fin_t in;
 				m_files[idx]->read_index<fin_t>(in, m_chunks, m_chunks_unsorted, m_cache_size * sizeof(key) / smack_rcache_mult);
-				log(SMACK_LOG_INFO, "%s: read-index: idx: %d, sorted: %zd, unsorted: %zd\n",
-						m_path.c_str(), idx, m_chunks.size(), m_chunks_unsorted.size());
+
+				log(SMACK_LOG_INFO, "%s: read-index: idx: %d, sorted: %zd, unsorted: %zd, num: %zd\n",
+						m_path.c_str(), idx, m_chunks.size(), m_chunks_unsorted.size(), this->num());
 			}
 
 			if (m_chunks.size()) {
@@ -652,6 +652,7 @@ class blob {
 			boost::mutex::scoped_lock guard(m_write_lock);
 			m_remove_cache.insert(key);
 			m_wcache.erase(key);
+
 			return m_remove_cache.size() > m_cache_size;
 		}
 
@@ -698,13 +699,14 @@ class blob {
 		}
 
 		/* returns current number of records and data size on disk */
-		void size(size_t &data_size, bool &have_split) {
+		void disk_stat(size_t &num, size_t &data_size, bool &have_split) {
 			boost::mutex::scoped_lock disk_guard(m_disk_lock);
 
 			have_split = false;
 			if (m_split_dst)
 				have_split = true;
 
+			num = this->num() + m_wcache.size();
 			current_bstore()->size(data_size);
 		}
 
@@ -740,6 +742,17 @@ class blob {
 		std::vector<chunk> m_chunks_unsorted;
 
 		key m_last_average_key;
+
+		size_t num() {
+			size_t num = 0;
+			for (std::map<key, chunk, keycomp>::iterator it = m_chunks.begin(); it != m_chunks.end(); ++it)
+				num += it->second.ctl()->num;
+
+			for (std::vector<chunk>::iterator it = m_chunks_unsorted.begin(); it != m_chunks_unsorted.end(); ++it)
+				num += it->ctl()->num;
+
+			return num;
+		}
 
 		boost::shared_ptr<blob_store> current_bstore(void) {
 			return m_files[m_chunk_idx];
