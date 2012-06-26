@@ -1,3 +1,9 @@
+smack (0.2.1) unstable; urgency=low
+
+  * Added smack_sync() and smack_total_num() calls
+
+ -- Evgeniy Polyakov <zbr@ioremap.net>  Tue, 26 Jun 2012 17:02:13 +0400
+
 smack (0.2.0) unstable; urgency=low
 
   * Added lz4 (default and high) compression
