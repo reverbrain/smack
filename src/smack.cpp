@@ -323,7 +323,6 @@ long long smack_total_num(struct smack_ctl *ctl)
 void smack_sync(struct smack_ctl *ctl)
 {
 	try {
-		long long num;
 		switch (ctl->type) {
 			case SMACK_STORAGE_ZLIB_DEFAULT:
 				ctl->sm.smzd->sync();
