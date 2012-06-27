@@ -99,6 +99,7 @@ struct smack_ctl *smack_init(struct smack_init_ctl *ictl, int *errp)
 		goto err_out_free;
 	}
 
+	*errp = 0;
 	log(SMACK_LOG_INFO, "smack initialized\n");
 	return ctl;
 
@@ -240,7 +241,8 @@ int smack_remove(struct smack_ctl *ctl, struct index *idx)
 				ctl->sm.smlh->remove(k);
 				break;
 		}
-	} catch (...) {
+	} catch (const std::exception &e) {
+		log(SMACK_LOG_ERROR, "%s: could not remove data: %s: %s\n", key(idx).str(), e.what(), strerror(errno));
 		return -EINVAL;
 	}
 	return 0;
@@ -284,7 +286,8 @@ int smack_lookup(struct smack_ctl *ctl, struct index *idx, char **pathp)
 		*pathp = p;
 
 		return path.size();
-	} catch (...) {
+	} catch (const std::exception &e) {
+		log(SMACK_LOG_ERROR, "%s: could not remove data: %s: %s\n", key(idx).str(), e.what(), strerror(errno));
 		return -EINVAL;
 	}
 }
@@ -343,6 +346,7 @@ void smack_sync(struct smack_ctl *ctl)
 				ctl->sm.smlh->sync();
 				break;
 		}
-	} catch (...) {
+	} catch (const std::exception &e) {
+		log(SMACK_LOG_ERROR, "Could not sync: %s\n", e.what());
 	}
 }

@@ -140,11 +140,9 @@ class smack {
 					if (num > blob_num_)
 						blob_num_ = num;
 
-					if (b->have_unsorted_chunks() > 0) {
-						b->want_resort = true;
-						proc_.notify(b);
-					}
-
+					b->set_want_rcache(true);
+					b->set_want_resort(b->have_unsorted_chunks() > 0);
+					proc_.notify(b);
 				}
 			}
 

@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
 
 	int err;
 	sctl = smack_init(&ictl, &err);
-	if (err)
+	if (!sctl)
 		return err;
 
 	std::string data = "we;lkqrjw34npvqt789340cmq23p490crtm qwpe90xwp oqu;evoeiruqvwoeiruqvbpoeiqnpqvriuevqiouei uropqwie qropeiru qwopeir";
@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
 	long num = 1000000, i;
 	struct timeval start, end;
 
-#if 1
+#if 0
 	log(SMACK_LOG_INFO, "starting write test\n");
 	gettimeofday(&start, NULL);
 	for (i = 0; i < num; ++i) {
@@ -78,7 +78,7 @@ int main(int argc, char *argv[])
 				i, smack_total_num(sctl), diff / 1000000., i * 1000000 / diff, diff / i);
 	}
 
-	//s.sync();
+	smack_sync(sctl);
 #endif
 
 #if 0
@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
 	logger::instance()->init("/dev/stdout", 10);
 #endif
 
-	//logger::instance()->init("/dev/stdout", 0xff);
+	//logger::instance()->init("/dev/stdout", 15);
 
 	log(SMACK_LOG_INFO, "starting read test\n");
 	gettimeofday(&start, NULL);

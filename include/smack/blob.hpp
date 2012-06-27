@@ -41,6 +41,9 @@ namespace bio = boost::iostreams;
 #define smack_rcache_mult	10000
 
 struct chunk_ctl {
+	unsigned char		start[SMACK_KEY_SIZE];	/* ID of the first key */
+	unsigned char		end[SMACK_KEY_SIZE];	/* ID of the last key */
+	
 	uint64_t		data_offset;		/* data offset in data file for given chunk */
 	uint64_t		compressed_data_size;		/* size of (compressed) data on disk */
 	uint64_t		uncompressed_data_size;		/* size of (compressed) data on disk */
@@ -61,6 +64,8 @@ class chunk : public bloom {
 		{
 			memcpy(&m_ctl, &ctl, sizeof(struct chunk_ctl));
 			m_ctl.bloom_size = data.size();
+			m_start = key(ctl.start, sizeof(ctl.start));
+			m_end = key(ctl.end, sizeof(ctl.end));
 		}
 
 		chunk(const chunk &ch) : bloom(ch.data()) {
@@ -75,12 +80,20 @@ class chunk : public bloom {
 			return &m_ctl;
 		}
 
-		key &start(void) {
+		const key &start(void) const {
 			return m_start;
 		}
 
-		key &end(void) {
+		const key &end(void) const {
 			return m_end;
+		}
+
+		void set_bounds(const struct index *start, const struct index *end) {
+			m_start.set(start);
+			m_end.set(end);
+
+			memcpy(m_ctl.start, start->id, SMACK_KEY_SIZE);
+			memcpy(m_ctl.end, end->id, SMACK_KEY_SIZE);
 		}
 
 		/* this must be (and it is) single-threaded operation */
@@ -146,9 +159,7 @@ class blob_store {
 
 			ch.ctl()->data_offset = bio::seek<bio::file_sink>(dst_data, 0, std::ios_base::end);
 
-			ch.start().set(cache.begin()->first.idx());
-			ch.end().set(cache.rbegin()->first.idx());
-
+			const struct index *end_idx = cache.rbegin()->first.idx();
 			{
 				bio::filtering_streambuf<bio::output> out;
 				out.push(out_processor);
@@ -186,7 +197,7 @@ class blob_store {
 							m_path_base.c_str(), key(idx).str(), count, num, idx->ts, idx->data_size);
 
 					if (++count == num) {
-						ch.end().set(idx);
+						end_idx = idx;
 						++it;
 						break;
 					}
@@ -211,6 +222,7 @@ class blob_store {
 				bio::write<bio::filtering_streambuf<bio::output> >(out, tmp.data(), tmp.size());
 #endif
 
+				ch.set_bounds(cache.begin()->first.idx(), end_idx);
 				cache.erase(cache.begin(), it);
 				out.strict_sync();
 
@@ -255,11 +267,6 @@ class blob_store {
 			try {
 				for (int i = 0; i < ch.ctl()->num; ++i) {
 					bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)&idx, sizeof(struct index));
-
-					log(SMACK_LOG_DSA, "%s: %s: %d/%d: ts: %zu, data-size: %d\n",
-							m_path_base.c_str(), key(&idx).str(), i, ch.ctl()->num, idx.ts, idx.data_size);
-
-
 					std::string tmp;
 					tmp.resize(idx.data_size);
 					bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)tmp.data(), idx.data_size);
@@ -454,30 +461,26 @@ class blob_store {
 
 				struct index idx;
 
-				int st = 0;
-				size_t off = 0;
-				for (int i = 0; i < ch.ctl()->num; ++i) {
-					bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)&idx, sizeof(struct index));
+				if (step < ctl.num) {
+					int st = 0;
+					size_t off = 0;
+					for (int i = 0; i < ch.ctl()->num; ++i) {
+						bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)&idx, sizeof(struct index));
 
-					log(SMACK_LOG_DSA, "%s: %s: ts: %zd, data-size: %d, flags: %x\n",
-							m_path_base.c_str(), key(&idx).str(), idx.ts, idx.data_size, idx.flags);
+						log(SMACK_LOG_DSA, "%s: %s: ts: %zd, data-size: %d, flags: %x\n",
+								m_path_base.c_str(), key(&idx).str(), idx.ts, idx.data_size, idx.flags);
 
-					std::string tmp;
-					tmp.resize(idx.data_size);
-					bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)tmp.data(), idx.data_size);
+						std::string tmp;
+						tmp.resize(idx.data_size);
+						bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)tmp.data(), idx.data_size);
 
-					if (i == 0)
-						ch.start().set(&idx);
+						if (++st == step) {
+							ch.rcache_add(key(&idx), off);
+							st = 0;
+						}
 
-					if (i == ch.ctl()->num - 1)
-						ch.end().set(&idx);
-
-					if (++st == step) {
-						ch.rcache_add(key(&idx), off);
-						st = 0;
+						off += sizeof(struct index) + idx.data_size;
 					}
-
-					off += sizeof(struct index) + idx.data_size;
 				}
 
 				log(SMACK_LOG_NOTICE, "%s: read_chunks: %zd: data-offset: %zd, "
@@ -501,11 +504,12 @@ template <class fout_t, class fin_t>
 class blob {
 	public:
 		blob(const std::string &path, int bloom_size, size_t max_cache_size) :
-		want_resort(false),
 		m_path(path),
 		m_cache_size(max_cache_size),
 		m_bloom_size(bloom_size),
-		m_chunk_idx(0)
+		m_chunk_idx(0),
+		m_want_rcache(false),
+		m_want_resort(false)
 		{
 			time_t mtime = 0;
 			ssize_t size = 0;
@@ -541,7 +545,7 @@ class blob {
 			if (idx != -1) {
 				m_chunk_idx = idx;
 				fin_t in;
-				m_files[idx]->read_index<fin_t>(in, m_chunks, m_chunks_unsorted, m_cache_size * sizeof(key) / smack_rcache_mult);
+				m_files[idx]->read_index<fin_t>(in, m_chunks, m_chunks_unsorted, 0);
 
 				log(SMACK_LOG_INFO, "%s: read-index: idx: %d, sorted: %zd, unsorted: %zd, num: %zd\n",
 						m_path.c_str(), idx, m_chunks.size(), m_chunks_unsorted.size(), this->num());
@@ -673,8 +677,10 @@ class blob {
 
 			boost::mutex::scoped_lock disk_guard(m_disk_lock);
 
-			if ((m_chunks_unsorted.size() > 50) || m_split_dst || want_resort) {
-				want_resort = false;
+			if ((m_chunks_unsorted.size() > 50) || m_split_dst || m_want_resort) {
+				m_want_resort = false;
+				m_want_rcache = false;
+
 				chunks_resort(tmp);
 
 				if (m_split_dst) {
@@ -691,8 +697,19 @@ class blob {
 
 					m_split_dst.reset();
 				}
-			} else if (tmp.size()) {
-				write_cache_to_chunks(tmp, false);
+			} else {
+				if (m_want_rcache) {
+					fin_t in;
+
+					m_chunks.clear();
+					m_chunks_unsorted.clear();
+					current_bstore()->read_index(in, m_chunks, m_chunks_unsorted,
+							m_cache_size * sizeof(key) / smack_rcache_mult);
+					m_want_rcache = false;
+				}
+				
+				if (tmp.size())
+					write_cache_to_chunks(tmp, false);
 			}
 
 			return m_wcache.size() >= m_cache_size;
@@ -723,7 +740,18 @@ class blob {
 			return m_chunks_unsorted.size();
 		}
 
-		bool want_resort;
+		void set_want_rcache(bool want_rcache) {
+			boost::mutex::scoped_lock disk_guard(m_disk_lock);
+
+			m_want_rcache = want_rcache;
+		}
+
+		void set_want_resort(bool want_resort) {
+			boost::mutex::scoped_lock disk_guard(m_disk_lock);
+
+			m_want_resort = want_resort;
+		}
+
 	private:
 		key m_start;
 		boost::mutex m_write_lock;
@@ -742,6 +770,7 @@ class blob {
 		std::vector<chunk> m_chunks_unsorted;
 
 		key m_last_average_key;
+		bool m_want_rcache, m_want_resort;
 
 		size_t num() {
 			size_t num = 0;
