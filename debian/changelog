@@ -1,3 +1,9 @@
+smack (0.3.0) unstable; urgency=low
+
+  * Store chunk start/end info in ctl, populate data into rcache via cache_processor pool using multiple threads
+
+ -- Evgeniy Polyakov <zbr@ioremap.net>  Wed, 27 Jun 2012 20:25:13 +0400
+
 smack (0.2.1) unstable; urgency=low
 
   * Added smack_sync() and smack_total_num() calls
