@@ -14,7 +14,7 @@ logger::logger(void) : log_mask_(SMACK_LOG_ERROR | SMACK_LOG_INFO | SMACK_LOG_DA
 logger *logger::instance(void)
 {
 	if (!logger_) {
-		boost::mutex::scoped_lock(logger_init_lock_);
+		boost::mutex::scoped_lock guard(logger_init_lock_);
 		if (!logger_)
 			logger_ = new logger();
 	}
