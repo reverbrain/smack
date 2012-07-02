@@ -1,3 +1,12 @@
+smack (0.4.0) unstable; urgency=low
+
+  * Added smack_log_update() helper
+  * Added chunk header with version and magic
+  * Benchmark page added
+  * do the actual locking instead of creating and destroying the locking object on the same line.
+
+ -- Evgeniy Polyakov <zbr@ioremap.net> Mon, 02 Jul 2012 14:21:49 +0400
+
 smack (0.3.0) unstable; urgency=low
 
   * Store chunk start/end info in ctl, populate data into rcache via cache_processor pool using multiple threads

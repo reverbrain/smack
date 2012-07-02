@@ -1,6 +1,6 @@
 Summary:	low-level IO storage which packs data into sorted (optionally compressed) blobs
 Name:		smack
-Version:	0.3.0
+Version:	0.4.0
 Release:	1%{?dist}.1
 
 License:	GPLv2+
@@ -69,6 +69,12 @@ rm -rf %{buildroot}
 %{_libdir}/lib*.so
 
 %changelog
+* Mon Jul 02 2012 Evgeniy Polyakov <zbr@ioremap.net> - 0.4.0
+- Added smack_log_update() helper
+- Added chunk header with version and magic
+- Benchmark page added
+- do the actual locking instead of creating and destroying the locking object on the same line.
+
 * Wed Jun 27 2012 Evgeniy Polyakov <zbr@ioremap.net> - 0.3.0
 - Store chunk start/end info in ctl, populate data into rcache via cache_processor pool using multiple threads
 
