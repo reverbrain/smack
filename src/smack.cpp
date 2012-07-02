@@ -350,3 +350,8 @@ void smack_sync(struct smack_ctl *ctl)
 		log(SMACK_LOG_ERROR, "Could not sync: %s\n", e.what());
 	}
 }
+
+void smack_log_update(struct smack_ctl *, char *log, uint32_t mask)
+{
+	logger::instance()->init(log, mask);
+}

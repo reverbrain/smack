@@ -44,6 +44,7 @@ int smack_remove(struct smack_ctl *ctl, struct index *idx);
 int smack_lookup(struct smack_ctl *ctl, struct index *idx, char **pathp);
 long long smack_total_num(struct smack_ctl *ctl);
 void smack_sync(struct smack_ctl *ctl);
+void smack_log_update(struct smack_ctl *ctl, char *log, uint32_t mask);
 
 #ifdef __cplusplus
 }

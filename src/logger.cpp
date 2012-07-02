@@ -29,16 +29,18 @@ void logger::init(const std::string &path, int log_mask, bool flush)
 	log_mask_ = log_mask;
 	flush_ = flush;
 
-	if (log_)
-		fclose(log_);
+	if (path.size()) {
+		if (log_)
+			fclose(log_);
 
-	log_ = fopen(path.c_str(), "a");
-	if (!log_) {
-		int err = -errno;
-		std::ostringstream str;
+		log_ = fopen(path.c_str(), "a");
+		if (!log_) {
+			int err = -errno;
+			std::ostringstream str;
 
-		str << "Could not open log '" << path << "': " << err;
-		throw std::runtime_error(str.str());
+			str << "Could not open log '" << path << "': " << err;
+			throw std::runtime_error(str.str());
+		}
 	}
 }
 
