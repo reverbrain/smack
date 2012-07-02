@@ -51,6 +51,16 @@ struct chunk_ctl {
 	int			bloom_size;		/* bloom size in bytes */
 } __attribute__ ((packed));
 
+#define SMACK_DISK_FORMAT_VERSION		1
+#define SMACK_DISK_FORMAT_MAGIC			"SmAcK BaCkEnD"
+
+struct chunk_header {
+	char			magic[16];
+	uint64_t		timestamp;
+	int			version;
+	int			pad[3];
+};
+
 class chunk : public bloom {
 	public:
 		chunk(int bloom_size = 128) : bloom(bloom_size)
@@ -415,6 +425,18 @@ class blob_store {
 
 		void store_chunk_meta(chunk &ch) {
 			bio::file_sink chunk(m_path_base + ".chunk", std::ios::app);
+			size_t data_size = bio::seek<bio::file_sink>(chunk, 0, std::ios::end);
+			if (!data_size) {
+				struct chunk_header h;
+				memset(&h, 0, sizeof(struct chunk_header));
+
+				snprintf(h.magic, sizeof(h.magic), SMACK_DISK_FORMAT_MAGIC);
+				h.version = SMACK_DISK_FORMAT_VERSION;
+				h.timestamp = time(NULL);
+
+				bio::write<bio::file_sink>(chunk, (char *)&h, sizeof(struct chunk_header));
+			}
+
 			bio::write<bio::file_sink>(chunk, (char *)ch.ctl(), sizeof(struct chunk_ctl));
 			bio::write<bio::file_sink>(chunk, ch.data().data(), ch.data().size());
 		}
@@ -428,6 +450,8 @@ class blob_store {
 			bio::file_source ch_src(m_path_base + ".chunk");
 			size_t chunk_size = bio::seek<bio::file_source>(ch_src, 0, std::ios::end);
 			bio::seek<bio::file_source>(ch_src, 0, std::ios::beg);
+
+			check_chunk_header(ch_src);
 
 			while (offset < chunk_size) {
 				struct chunk_ctl ctl;
@@ -496,6 +520,20 @@ class blob_store {
 					chunks_unsorted.push_back(ch);
 
 				offset += sizeof(struct chunk_ctl) + ctl.bloom_size;
+			}
+		}
+
+		void check_chunk_header(bio::file_source &ch_src) {
+			struct chunk_header h;
+			bio::read<bio::file_source>(ch_src, (char *)&h, sizeof(struct chunk_header));
+			if (memcmp(h.magic, SMACK_DISK_FORMAT_MAGIC, sizeof(SMACK_DISK_FORMAT_MAGIC))) {
+				log(SMACK_LOG_ERROR, "%s: smack disk format magic mismatch\n", m_path_base.c_str());
+				throw std::runtime_error("smack disk format magic mismatch");
+			}
+			if (h.version != SMACK_DISK_FORMAT_VERSION) {
+				log(SMACK_LOG_ERROR, "%s: smack disk format version mismatch: stored: %d, current: %d, please convert\n",
+						m_path_base.c_str(), h.version, SMACK_DISK_FORMAT_VERSION);
+				throw std::runtime_error("smack disk format version mismatch");
 			}
 		}
 };

@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
 	long num = 1000000, i;
 	struct timeval start, end;
 
-#if 0
+#if 1
 	log(SMACK_LOG_INFO, "starting write test\n");
 	gettimeofday(&start, NULL);
 	for (i = 0; i < num; ++i) {
