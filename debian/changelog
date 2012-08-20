@@ -1,3 +1,9 @@
+smack (0.5.0) unstable; urgency=low
+
+  * Use log level instead of log mask
+
+ -- Evgeniy Polyakov <zbr@ioremap.net>  Mon, 20 Aug 2012 17:43:09 +0400
+
 smack (0.4.0) unstable; urgency=low
 
   * Added smack_log_update() helper

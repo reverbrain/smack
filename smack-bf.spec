@@ -1,6 +1,6 @@
 Summary:	low-level IO storage which packs data into sorted (optionally compressed) blobs
 Name:		smack
-Version:	0.4.0
+Version:	0.5.0
 Release:	1%{?dist}.1
 
 License:	GPLv2+
@@ -69,6 +69,9 @@ rm -rf %{buildroot}
 %{_libdir}/lib*.so
 
 %changelog
+* Mon Aug 20 2012 Evgeniy Polyakov <zbr@ioremap.net> - 0.5.0
+- Use log level instead of log mask
+
 * Mon Jul 02 2012 Evgeniy Polyakov <zbr@ioremap.net> - 0.4.0
 - Added smack_log_update() helper
 - Added chunk header with version and magic
