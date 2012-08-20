@@ -71,7 +71,7 @@ class snappy_decompressor : public bio::multichar_input_filter {
 				if (!good)
 					return -1;
 
-				log(SMACK_LOG_DSA, "snappy: decompress: %zd -> %zd\n", have, m_dec.size());
+				log(SMACK_LOG_DEBUG, "snappy: decompress: %zd -> %zd\n", have, m_dec.size());
 
 				m_dec_offset = 0;
 				s_state = s_have_data;
@@ -173,7 +173,7 @@ class snappy_compressor : public bio::multichar_output_filter {
 		template<typename Sink>
 		void compress(Sink &dst) {
 			::snappy::Compress(m_chunk.data(), m_chunk_size, &m_compr);
-			log(SMACK_LOG_DSA, "snappy: compress: %zd -> %zd\n", m_chunk_size, m_compr.size());
+			log(SMACK_LOG_DEBUG, "snappy: compress: %zd -> %zd\n", m_chunk_size, m_compr.size());
 
 			m_compr_offset = 0;
 			s_state = s_have_data;

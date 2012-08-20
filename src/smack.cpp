@@ -59,7 +59,7 @@ struct smack_ctl *smack_init(struct smack_init_ctl *ictl, int *errp)
 	}
 
 	if (ictl->log)
-		logger::instance()->init(ictl->log, ictl->log_mask);
+		logger::instance()->init(ictl->log, ictl->log_level);
 	try {
 		switch (ctl->type) {
 			case SMACK_STORAGE_ZLIB_DEFAULT:

@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
 	memset(&ictl, 0, sizeof(struct smack_init_ctl));
 	ictl.path = (char *)path.c_str();
 	ictl.log = (char *)"/dev/stdout";
-	ictl.log_mask = 10;
+	ictl.log_level = SMACK_LOG_INFO;
 	ictl.flush = 1;
 	ictl.bloom_size  = 1024;
 	ictl.max_cache_size = 1000;
@@ -91,10 +91,10 @@ int main(int argc, char *argv[])
 	}
 
 	s.sync();
-	logger::instance()->init("/dev/stdout", 10);
+	logger::instance()->init("/dev/stdout", SMACK_LOG_INFO);
 #endif
 
-	//logger::instance()->init("/dev/stdout", 15);
+	//logger::instance()->init("/dev/stdout", SMACK_LOG_NOTICE);
 
 	log(SMACK_LOG_INFO, "starting read test\n");
 	gettimeofday(&start, NULL);

@@ -24,7 +24,7 @@ struct smack_ctl;
 struct smack_init_ctl {
 	char			*path;
 	char			*log;
-	int			log_mask;
+	int			log_level;
 	int			flush;
 
 	int			bloom_size;

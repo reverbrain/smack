@@ -86,7 +86,7 @@ class decompressor : public bio::multichar_input_filter {
 					throw std::runtime_error("lz4: decompression header mismatch");
 				}
 
-				log(SMACK_LOG_DSA, "lz4: decompress: read: %zd, consumed: %d -> %d\n", have, consumed, header.uncompressed_size);
+				log(SMACK_LOG_DEBUG, "lz4: decompress: read: %zd, consumed: %d -> %d\n", have, consumed, header.uncompressed_size);
 
 				m_dec_offset = 0;
 				s_state = s_have_data;
@@ -198,7 +198,7 @@ class compressor : public bio::multichar_output_filter {
 			int compressed = m_compress_function(m_chunk.data(), (char *)m_compr.data(), m_chunk_size);
 			m_compr.resize(compressed);
 
-			log(SMACK_LOG_DSA, "lz4: compress: %zd -> %zd\n", m_chunk_size, m_compr.size());
+			log(SMACK_LOG_DEBUG, "lz4: compress: %zd -> %zd\n", m_chunk_size, m_compr.size());
 
 			struct header header;
 

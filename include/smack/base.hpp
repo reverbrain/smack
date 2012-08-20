@@ -63,29 +63,29 @@ struct keycomp {
 	}
 };
 
-
-#define SMACK_LOG_NOTICE		(1<<0)
-#define SMACK_LOG_INFO			(1<<1)
-#define SMACK_LOG_UNUSED		(1<<2)
-#define SMACK_LOG_ERROR			(1<<3)
-#define SMACK_LOG_DSA			(1<<4)
-#define SMACK_LOG_DATA			(1<<5)
+enum smack_log_level {
+	SMACK_LOG_DATA = 0,
+	SMACK_LOG_ERROR,
+	SMACK_LOG_INFO,
+	SMACK_LOG_NOTICE,
+	SMACK_LOG_DEBUG,
+};
 
 #define SMACK_LOG_CHECK  __attribute__ ((format(printf, 3, 4)))
 
 class logger {
 	public:
-		int log_mask_;
+		int m_log_level;
 
 		static logger *instance(void);
-		void init(const std::string &path, int log_mask, bool flush = true);
+		void init(const std::string &path, int log_level, bool flush = true);
 
 		void do_log(const int mask, const char *format, ...) SMACK_LOG_CHECK;
 
 	private:
-		FILE *log_;
-		bool flush_;
-		boost::mutex lock_;
+		FILE *m_log;
+		bool m_flush;
+		boost::mutex m_lock;
 
 		logger(void);
 		logger(const logger &);
@@ -95,13 +95,13 @@ class logger {
 
 		static void destroy(void);
 
-		static logger *logger_;
+		static logger *m_logger;
 };
 
-#define log(mask, msg...) \
+#define log(level, msg...) \
 	do { \
-		if (logger::instance()->log_mask_ & (mask)) \
-			logger::instance()->do_log((mask), ##msg); \
+		if (logger::instance()->m_log_level >= (level)) \
+			logger::instance()->do_log((level), ##msg); \
 	} while (0)
 
 typedef unsigned int (* bloom_hash_t)(const char *data, int size);

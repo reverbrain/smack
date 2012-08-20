@@ -203,7 +203,7 @@ class blob_store {
 
 					data_offset += it->second.size() + sizeof(struct index);
 
-					log(SMACK_LOG_DSA, "%s: %s: stored %zd/%zd ts: %zu, data-size: %d\n",
+					log(SMACK_LOG_DEBUG, "%s: %s: stored %zd/%zd ts: %zu, data-size: %d\n",
 							m_path_base.c_str(), key(idx).str(), count, num, idx->ts, idx->data_size);
 
 					if (++count == num) {
@@ -314,7 +314,7 @@ class blob_store {
 			gettimeofday(&start, NULL);
 
 			if (!ch.check((char *)read_key.id(), SMACK_KEY_SIZE)) {
-				log(SMACK_LOG_DSA, "%s: %s: chunk start: %s, end: %s: bloom-check failed\n",
+				log(SMACK_LOG_DEBUG, "%s: %s: chunk start: %s, end: %s: bloom-check failed\n",
 						m_path_base.c_str(), read_key.str(), ch.start().str(), ch.end().str());
 				return false;
 			}
@@ -322,7 +322,7 @@ class blob_store {
 			size_t data_offset;
 			bool found = ch.rcache_find(read_key, data_offset);
 			if (!found) {
-				log(SMACK_LOG_DSA, "%s: %s: chunk start: %s, end: %s: rcache lookup failed\n",
+				log(SMACK_LOG_DEBUG, "%s: %s: chunk start: %s, end: %s: rcache lookup failed\n",
 						m_path_base.c_str(), read_key.str(), ch.start().str(), ch.end().str());
 				return false;
 			}
@@ -491,7 +491,7 @@ class blob_store {
 					for (int i = 0; i < ch.ctl()->num; ++i) {
 						bio::read<bio::filtering_streambuf<bio::input> >(in, (char *)&idx, sizeof(struct index));
 
-						log(SMACK_LOG_DSA, "%s: %s: ts: %zd, data-size: %d, flags: %x\n",
+						log(SMACK_LOG_DEBUG, "%s: %s: ts: %zd, data-size: %d, flags: %x\n",
 								m_path_base.c_str(), key(&idx).str(), idx.ts, idx.data_size, idx.flags);
 
 						std::string tmp;
