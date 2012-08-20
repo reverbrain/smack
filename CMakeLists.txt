@@ -1,7 +1,7 @@
 cmake_minimum_required (VERSION 2.6)
 project (smack)
 # The version number.
-set (smack_VERSION "0.4.0")
+set (smack_VERSION "0.5.0")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
