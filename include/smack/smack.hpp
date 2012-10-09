@@ -103,6 +103,7 @@ class smack {
 				size_t max_cache_size = 10000,
 				int max_blob_num = 100,
 				int cache_thread_num = 10) :
+			m_need_exit(false),
 			path_base_(path), bloom_size_(bloom_size), blob_num_(0),
 			max_cache_size_(max_cache_size), max_blob_num_(max_blob_num), proc_(cache_thread_num) {
 			if (!fs::exists(path))
@@ -150,9 +151,12 @@ class smack {
 				blobs_.insert(std::make_pair(key(),
 						boost::shared_ptr<blob<fout_t, fin_t> >(
 							new blob<fout_t, fin_t>(path + "/smack.0", bloom_size, max_cache_size))));
+
+			m_sync_thread = boost::thread(boost::bind(&smack::run_sync, this));
 		}
 
 		virtual ~smack() {
+			m_need_exit = true;
 			sync();
 		}
 
@@ -160,7 +164,6 @@ class smack {
 			boost::shared_ptr<blob<fout_t, fin_t> > curb = blob_lookup(key, false);
 
 			if (curb->write(key, data, size)) {
-#if 1
 				boost::mutex::scoped_lock guard(m_blobs_lock);
 
 				size_t data_size, num;
@@ -180,7 +183,7 @@ class smack {
 
 					blobs_.insert(std::make_pair(b->start(), b));
 				}
-#endif
+
 				proc_.notify(curb);
 			}
 		}
@@ -227,6 +230,7 @@ class smack {
 
 	private:
 		std::map<key, boost::shared_ptr<blob<fout_t, fin_t> >, keycomp> blobs_;
+		bool m_need_exit;
 		boost::mutex m_blobs_lock;
 		std::string path_base_;
 		int bloom_size_;
@@ -234,6 +238,7 @@ class smack {
 		size_t max_cache_size_;
 		size_t max_blob_num_;
 		cache_processor<fout_t, fin_t> proc_;
+		boost::thread m_sync_thread;
 
 		boost::shared_ptr<blob<fout_t, fin_t> > blob_lookup(const key &k, bool check_start_key = false) {
 			boost::mutex::scoped_lock guard(m_blobs_lock);
@@ -256,6 +261,22 @@ class smack {
 				throw std::out_of_range("smack::blob-lookup::start-key");
 
 			return b;
+		}
+
+		void run_sync() {
+			int m_sync_timeout = 60;
+
+			while (!m_need_exit) {
+				for (int i = 0; i < m_sync_timeout; ++i) {
+					if (m_need_exit)
+						break;
+
+					sleep(1);
+				}
+
+				if (!m_need_exit)
+					sync();
+			}
 		}
 };
 
