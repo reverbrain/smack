@@ -613,7 +613,7 @@ class blob {
 			/*
 			 * First, check remove cache
 			 * Write operation updates it first, so if something is here,
-			 * then we removed object and did not write anything above
+			 * we remove object and do not write anything above
 			 */
 			if (m_remove_cache.find(key) != m_remove_cache.end()) {
 				std::ostringstream str;
