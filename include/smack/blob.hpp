@@ -246,11 +246,11 @@ class blob_store {
 
 			store_chunk_meta(ch);
 
-			log(SMACK_LOG_NOTICE, "%s: store-chunk: start: %s, end: %s, num: %d, data-start: %zd, "
-					"uncompressed-data-size: %zd, compressed-data-size: %zd\n",
-					m_path_base.c_str(), ch.start().str(), ch.end().str(),
-					ch.ctl()->num, ch.ctl()->data_offset,
-					ch.ctl()->uncompressed_data_size, ch.ctl()->compressed_data_size);
+			log(SMACK_LOG_NOTICE, "%s: store-chunk: start: %s, end: %s, num: %d, file-size: %zd, chunk-data-offset: %zd, "
+					"uncompressed-data-size: %zd, compressed-data-size: %zd, errno: %d\n",
+					m_path_base.c_str(), ch.start().str(), ch.end().str(), ch.ctl()->num,
+					data_size, ch.ctl()->data_offset,
+					ch.ctl()->uncompressed_data_size, ch.ctl()->compressed_data_size, errno);
 
 			return ch;
 		}

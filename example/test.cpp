@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
 
 		struct index idx = *key.idx();
 
-		log(SMACK_LOG_DATA, "%s: write key: %s\n", key.str(), str.str().c_str());
+		//log(SMACK_LOG_DATA, "%s: write key: %s\n", key.str(), str.str().c_str());
 		std::string d = data + str.str() + "\n";
 		idx.data_size = d.size();
 		smack_write(sctl, &idx, d.data());
@@ -78,7 +78,9 @@ int main(int argc, char *argv[])
 				i, smack_total_num(sctl), diff / 1000000., i * 1000000 / diff, diff / i);
 	}
 
+	logger::instance()->init("/dev/stdout", SMACK_LOG_NOTICE);
 	smack_sync(sctl);
+	sleep(100000);
 #endif
 
 #if 0
