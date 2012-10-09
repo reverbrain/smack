@@ -46,7 +46,7 @@ struct chunk_ctl {
 	
 	uint64_t		data_offset;		/* data offset in data file for given chunk */
 	uint64_t		compressed_data_size;		/* size of (compressed) data on disk */
-	uint64_t		uncompressed_data_size;		/* size of (compressed) data on disk */
+	uint64_t		uncompressed_data_size;		/* size of uncompressed data stored into this compressed chunk on disk */
 	int			num;			/* number of records in the chunk */
 	int			bloom_size;		/* bloom size in bytes */
 } __attribute__ ((packed));
@@ -239,6 +239,12 @@ class blob_store {
 				ch.ctl()->num = count;
 			}
 
+			/*
+			 * XXX
+			 * seek() can return -1
+			 *
+			 * It does not hurt system, but it is really weird, how boost::iostreams flush data to underlying sinks
+			 */
 			size_t data_size = bio::seek<bio::file_sink>(dst_data, 0, std::ios_base::end);
 
 			ch.ctl()->compressed_data_size = data_size - ch.ctl()->data_offset;
