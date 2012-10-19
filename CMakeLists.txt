@@ -1,7 +1,12 @@
 cmake_minimum_required (VERSION 2.6)
 project (smack)
+
 # The version number.
-set (smack_VERSION "0.5.0")
+FILE (READ "${CMAKE_CURRENT_SOURCE_DIR}/debian/changelog" DEBCHANGELOG)
+string(REGEX MATCH "([0-9]+\\.[0-9]+\\.[0-9]+)" DEBFULLVERSION "${DEBCHANGELOG}")
+STRING (REGEX MATCH "([0-9]+\\.[0-9]+)" SMACK_VERSION_ABI "${DEBFULLVERSION}")
+STRING (REGEX MATCH "([0-9]+$)" SMACK_VERSION_MINOR "${DEBFULLVERSION}")
+set(${smack_VERSION} "${SMACK_VERSION_ABI}.${SMACK_VERSION_MINOR}")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
