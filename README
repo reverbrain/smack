@@ -1,4 +1,9 @@
 SMACK - low-level IO storage which packs data into sorted (zlib/bzip2/snappy compressed) blobs
+It was created to host huge amount of rather small compressible data in elliptics,
+thus providing extremely fast write performance (tens of thousands RPS per node with hundreds of millions already written objects),
+backend architecture was implemented with HBase in mind, but some changes were tested and made different.
 
-Origianlly created as backend for elliptics: http://www.ioremap.net/projects/elliptics
+Origianlly created as backend for elliptics: http://www.reverbrain.com/elliptics/
 Benchmarks: http://www.ioremap.net/node/541
+
+Google group: https://groups.google.com/forum/?fromgroups=#!forum/reverbrain
