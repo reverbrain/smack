@@ -6,4 +6,5 @@ backend architecture was implemented with HBase in mind, but some changes were t
 Origianlly created as backend for elliptics: http://www.reverbrain.com/elliptics/
 Benchmarks: http://www.ioremap.net/node/541
 
+Smack: http://www.reverbrain.com/smack/
 Google group: https://groups.google.com/forum/?fromgroups=#!forum/reverbrain
