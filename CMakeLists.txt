@@ -10,6 +10,8 @@ set(${smack_VERSION} "${SMACK_VERSION_ABI}.${SMACK_VERSION_MINOR}")
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
+OPTION (ENABLE_EXAMPLES "Build examples" OFF)
+
 find_package(SNAPPY REQUIRED)
 find_package(Boost REQUIRED filesystem system thread iostreams)
 set(CMAKE_CXX_FLAGS "-g -W -Wall")
@@ -19,7 +21,10 @@ FILE(GLOB headers "${CMAKE_CURRENT_SOURCE_DIR}/include/smack/*.hpp" "${CMAKE_CUR
 install(FILES ${headers} DESTINATION include/smack)
 
 add_subdirectory(src)
-add_subdirectory(example)
+
+IF (ENABLE_EXAMPLES)
+	add_subdirectory(example)
+ENDIF (ENABLE_EXAMPLES)
 
 set(ARCHIVE_NAME ${CMAKE_PROJECT_NAME})
 add_custom_target(dist
